@@ -243,9 +243,6 @@ check_lib_dependency() {
 #check_lib_dependencies <lib1> [lib2....]
 check_lib_dependencies() {
     print_section "Library Dependencies"
-    if [[ "${DRY_RUN}" -eq 1 ]]; then
-         print_dryrun "check_lib_dependencies ${@}"
-    fi
     local all_ok=0
     for lib in "${@}"; do
         check_lib_dependency "${lib}" || all_ok=1
