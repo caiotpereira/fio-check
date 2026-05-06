@@ -574,9 +574,9 @@ check_systemd_service() {
     fi
 
     #Verify if the distro supports systemd
-    if [[ ! $(command -v systemctl &>/dev/null) ]]; then
-        log_fail "Systemd Service: ${ssd} - systemctl not available "
-        return 1
+    if ! command -v systemctl &>/dev/null; then
+        log_skip "service: ${ssd} — systemctl not available (not a systemd system?)"
+        return 0
     fi
 
     #verify if the service exists
