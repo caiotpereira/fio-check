@@ -21,7 +21,7 @@
 #   1  one or more required dependencies missing
 # =============================================================================
 
-#set -euo pipefail
+set -euo pipefail
 
 # =============================================================================
 #  Global Variables
