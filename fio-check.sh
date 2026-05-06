@@ -282,8 +282,9 @@ check_sysctl() {
 
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         print_dryrun "sysctl -n ${param}"
+        return 0
     fi
-    if [[ $(command -v sysctl &>/dev/null) ]]; then
+    if ! command -v sysctl &>/dev/null; then
         log_fail "Cannot find sysctl."
         return 1
     fi
