@@ -750,8 +750,8 @@ _resolve_profile() {
         realpath "${arg}"
         return 0
     fi
-    if [[ -f "${FIO_TEST_PROFILES/${arg}}" ]]; then
-        realpath "${FIO_TEST_PROFILES/${arg}}"
+    if [[ -f "${FIO_TEST_PROFILES}/${arg}" ]]; then
+        realpath "${FIO_TEST_PROFILES}/${arg}"
         return 0
     fi
     local candidate
