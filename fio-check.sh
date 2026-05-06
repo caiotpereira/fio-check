@@ -146,7 +146,7 @@ log_fail() {
 
 log_warn() {
     if [[ ${NO_WARNING} -eq 1 ]]; then
-        log_fail $1;
+        log_fail "$@";
     else
         _log_report "[WARN] $*"
         _filter warn && print_warn "$*" || true
