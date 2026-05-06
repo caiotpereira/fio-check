@@ -920,7 +920,7 @@ write_report(){
 #
 # =============================================================================
 usage() {
-    local tool="$(basename $0)"
+    local tool; tool="$(basename "$0")"
     cat <<EOF
 $(_color_bold "${tool}") ${SCRIPT_VERSION} — Embedded Linux Test Framework
 
