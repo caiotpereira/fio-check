@@ -895,7 +895,7 @@ run_all() {
 
 #write_report [file] - defaults to fiocheck_report_<timestamp>.txt
 write_report(){
-    local out="${1:fiocheck_report_$(date '+%Y%m%d_%H%M%S')}"
+    local out="${1:-fiocheck_report_$(date '+%Y%m%d_%H%M%S')}"
 
     {
         printf 'Foundries Check Report — version %s\n' "${SCRIPT_VERSION}"
