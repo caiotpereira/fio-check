@@ -978,7 +978,6 @@ $(_color_bold "COMMANDS")
   check-deps <lib...>      Check shared library dependencies
   check-kconfig <SYM> [v] Check a kernel CONFIG symbol (optional expected value)
   check-cmd <cmd...>       Check that commands exist on PATH
-  report [file]            Write accumulated results to a plain-text file
   help                     Show this help
 
 $(_color_bold "OPTIONS")
@@ -1061,7 +1060,6 @@ main() {
         check-deps)    check_lib_dependencies "$@" ;;
         check-kconfig) check_kconfig "$@" ;;
         check-cmd)     check_cmds "$@" ;;
-        report)        write_report "$@" ;;
         help|"")       usage ;;
         *)             print_fail "Unknown command: ${cmd}"; usage; exit 1 ;;
     esac
