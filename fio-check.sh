@@ -74,7 +74,7 @@ _color_red()    { _color "0;31" "$*"; }
 _color_green()  { _color "0;32" "$*"; }
 _color_yellow() { _color "0;33" "$*"; }
 _color_blue()   { _color "0;34" "$*"; }
-_color_cyan()   { _color "0;35" "$*"; }
+_color_cyan()   { _color "0;36" "$*"; }
 _color_gray()   { _color "0;37" "$*"; }
 _color_bold()   { _color "1" "$*"; }
 _color_dim()    { _color "2" "$*"; }
