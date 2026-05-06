@@ -581,7 +581,7 @@ check_systemd_service() {
 
     #verify if the service exists
     local service_unit;
-    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null?head -1)"
+    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null | head -1)"
 
     if [[ -z "${service_unit}" ]]; then
         log_fail "service: ${ssd} - Unit file not found."
