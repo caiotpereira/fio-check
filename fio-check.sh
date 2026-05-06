@@ -599,6 +599,11 @@ check_systemd_service() {
     local report_msg="service: ${ssd} enable=${enable_state} active=${active_state}"
 
     #Verification with pre condition
+    if [[ "${enable_state}" == "masked" ]]; then
+        log_fail "${report_msg} — masked units cannot be started"
+        return 1
+    fi
+
     if [[ -n "${expected_state}" ]]; then
         if [[ "${enable_state}" == "${expected_state}" ]]; then
             log_ok "${report_msg}"
