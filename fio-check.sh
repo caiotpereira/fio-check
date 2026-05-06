@@ -628,11 +628,13 @@ check_systemd_service() {
     # Verify separately if the unit is inactive or failed regardless of enable state
     case "${active_state}" in
         active|activating)
-            log_ok "service: ${ssd} is running.";;
+            print_verbose "service ${ssd} is running" ;;
         failed)
-            log_warn "service: ${ssd} is in failed state - check journalctl -u ${ssd} .";;
-        inactive|*)
-            log_warn "service is ${ssd} is ${active_state} .";;
+            log_warn "service: ${ssd} is in failed state — check: journalctl -u ${ssd}" ;;
+        inactive)
+            print_verbose "service ${ssd} is ${active_state}" ;;
+        *)
+            log_warn "service: ${ssd} has unexpected active state: ${active_state}" ;;
     esac
 
 }
