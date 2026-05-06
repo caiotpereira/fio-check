@@ -334,10 +334,10 @@ check_kconfig() {
 
     local value
     if [[ "${config_file}" == "<(zcat /proc/config.gz)" ]]; then
-        _print_verbose="zcat /proc/config.gz 2>/dev/null | grep -E "^CONFIG_${symbol}=" | cut -d= -f2"
+        print_verbose "zcat /proc/config.gz 2>/dev/null | grep -E \"^CONFIG_${symbol}=\" | cut -d= -f2"
         value=$(zcat /proc/config.gz 2>/dev/null | grep -E "^CONFIG_${symbol}=" | cut -d= -f2) || true
     else
-        print_verbose="grep -E "^CONFIG_${symbol}=" "${config_file}" 2>/dev/null | cut -d= -f2"
+        print_verbose "grep -E \"^CONFIG_${symbol}=\" \"${config_file}\" 2>/dev/null | cut -d= -f2"
         value=$(grep -E "^CONFIG_${symbol}=" "${config_file}" 2>/dev/null | cut -d= -f2) || true
     fi
 
