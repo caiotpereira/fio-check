@@ -196,7 +196,7 @@ check_lib_dependency() {
 
     local found=0
     #1 - pkg-config method - Version verification OK
-    if ! command -v pkg-config & 2>/dev/null; then
+    if command -v pkg-config &>/dev/null; then
         print_verbose "pkg-config --exists ${lib}"
         pkg-config --exists "${lib}" 2>/dev/null && found=1 || true
 
