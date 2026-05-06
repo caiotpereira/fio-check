@@ -93,7 +93,6 @@ lib_docker_kconfig_network() {
     # Netfilter match extensions
     check_kconfig CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
     check_kconfig CONFIG_NETFILTER_XT_MATCH_CONNTRACK
-    check_kconfig CONFIG_NETFILTER_XT_MATCH_IPVS
     check_kconfig CONFIG_NETFILTER_XT_MARK
     #Posix event queue (/dev/mqueue)
     check_kconfig CONFIG_POSIX_MQUEUE
@@ -120,17 +119,13 @@ lib_docker_kconfig_optional() {
     # IP Virtual Server — required for Docker Swarm mode load balancing
     check_kconfig CONFIG_IP_VS
     check_kconfig CONFIG_IP_VS_NFCT
-    check_kconfig CONFIG_IP_VS_PROTO_TCP
-    check_kconfig CONFIG_IP_VS_PROTO_UDP
     check_kconfig CONFIG_IP_VS_RR
 
     # cgroup optional features
-    check_kconfig CONFIG_CGROUP_HUGETLB     # hugepage limits
     check_kconfig CONFIG_BLK_CGROUP         # block I/O cgroup
     check_kconfig CONFIG_BLK_DEV_THROTTLING # I/O throttling
     check_kconfig CONFIG_FAIR_GROUP_SCHED   # fair CPU scheduling
     check_kconfig CONFIG_CFS_BANDWIDTH      # CFS CPU bandwidth control
-    check_kconfig CONFIG_CFQ_GROUP_IOSCHED  #group IO scheduling in CFQ.
 
 
     # # IPv6 support
