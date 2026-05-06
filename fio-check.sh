@@ -21,7 +21,7 @@
 #   1  one or more required dependencies missing
 # =============================================================================
 
-set -euo pipefail
+#set -euo pipefail
 
 # =============================================================================
 #  Global Variables
@@ -74,7 +74,7 @@ _color_red()    { _color "0;31" "$*"; }
 _color_green()  { _color "0;32" "$*"; }
 _color_yellow() { _color "0;33" "$*"; }
 _color_blue()   { _color "0;34" "$*"; }
-_color_cyan()   { _color "0;36" "$*"; }
+_color_cyan()   { _color "0;35" "$*"; }
 _color_gray()   { _color "0;37" "$*"; }
 _color_bold()   { _color "1" "$*"; }
 _color_dim()    { _color "2" "$*"; }
@@ -110,7 +110,7 @@ _log_report () {
 _filter(){
     local filter_t="$1"
     #No Filter
-    [[ -z "${FILTER}" ]] && return 0
+    [[ -z $"${FILTER}" ]] && return 0
     case "${filter_t}" in
         ok)   [[ "${FILTER}" == *"ok"*   ]] && return 0 ;;
         fail) [[ "${FILTER}" == *"fail"* ]] && return 0 ;;
@@ -146,7 +146,7 @@ log_fail() {
 
 log_warn() {
     if [[ ${NO_WARNING} -eq 1 ]]; then
-        log_fail "$@";
+        log_fail $1;
     else
         _log_report "[WARN] $*"
         _filter warn && print_warn "$*" || true
@@ -196,7 +196,7 @@ check_lib_dependency() {
 
     local found=0
     #1 - pkg-config method - Version verification OK
-    if command -v pkg-config &>/dev/null; then
+    if ! command -v pkg-config & 2>/dev/null; then
         print_verbose "pkg-config --exists ${lib}"
         pkg-config --exists "${lib}" 2>/dev/null && found=1 || true
 
@@ -243,6 +243,9 @@ check_lib_dependency() {
 #check_lib_dependencies <lib1> [lib2....]
 check_lib_dependencies() {
     print_section "Library Dependencies"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+         print_dryrun "check_lib_dependencies ${@}"
+    fi
     local all_ok=0
     for lib in "${@}"; do
         check_lib_dependency "${lib}" || all_ok=1
@@ -282,9 +285,8 @@ check_sysctl() {
 
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         print_dryrun "sysctl -n ${param}"
-        return 0
     fi
-    if ! command -v sysctl &>/dev/null; then
+    if [[ $(command -v sysctl &>/dev/null) ]]; then
         log_fail "Cannot find sysctl."
         return 1
     fi
@@ -334,10 +336,10 @@ check_kconfig() {
 
     local value
     if [[ "${config_file}" == "<(zcat /proc/config.gz)" ]]; then
-        print_verbose "zcat /proc/config.gz 2>/dev/null | grep -E \"^CONFIG_${symbol}=\" | cut -d= -f2"
+        _print_verbose="zcat /proc/config.gz 2>/dev/null | grep -E "^CONFIG_${symbol}=" | cut -d= -f2"
         value=$(zcat /proc/config.gz 2>/dev/null | grep -E "^CONFIG_${symbol}=" | cut -d= -f2) || true
     else
-        print_verbose "grep -E \"^CONFIG_${symbol}=\" \"${config_file}\" 2>/dev/null | cut -d= -f2"
+        print_verbose="grep -E "^CONFIG_${symbol}=" "${config_file}" 2>/dev/null | cut -d= -f2"
         value=$(grep -E "^CONFIG_${symbol}=" "${config_file}" 2>/dev/null | cut -d= -f2) || true
     fi
 
@@ -564,24 +566,24 @@ fi
 #   check_systemd_service ssh          enabled    # must be enabled
 #   check_systemd_service bluetooth    disabled   # must be disabled
 check_systemd_service() {
-    local ssd="${1:?check_systemd_service: name required}"
+    local ssd="${1:check_systemd_service: name required}"
     local expected_state="${2:-}"
     # local opt="${3:-}"
 
-    if [[ "${DRY_RUN}" -eq 1 ]]; then
+    if [[ "${FIO_TEST_DRY_RUN}" -eq 1 ]]; then
         print_dryrun "check_systemd_service ${ssd}${expected_state:+ expected=${expected_state}}"
         return 0
     fi
 
     #Verify if the distro supports systemd
-    if ! command -v systemctl &>/dev/null; then
-        log_skip "service: ${ssd} — systemctl not available (not a systemd system?)"
-        return 0
+    if [[ ! $(command -v systemctl &>/dev/null) ]]; then
+        log_fail "Systemd Service: ${ssd} - systemctl not available "
+        return 1
     fi
 
     #verify if the service exists
     local service_unit;
-    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null | head -1)"
+    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null?head -1)"
 
     if [[ -z "${service_unit}" ]]; then
         log_fail "service: ${ssd} - Unit file not found."
@@ -599,11 +601,6 @@ check_systemd_service() {
     local report_msg="service: ${ssd} enable=${enable_state} active=${active_state}"
 
     #Verification with pre condition
-    if [[ "${enable_state}" == "masked" ]]; then
-        log_fail "${report_msg} — masked units cannot be started"
-        return 1
-    fi
-
     if [[ -n "${expected_state}" ]]; then
         if [[ "${enable_state}" == "${expected_state}" ]]; then
             log_ok "${report_msg}"
@@ -628,13 +625,11 @@ check_systemd_service() {
     # Verify separately if the unit is inactive or failed regardless of enable state
     case "${active_state}" in
         active|activating)
-            print_verbose "service ${ssd} is running" ;;
+            log_ok "service: ${ssd} is running.";;
         failed)
-            log_warn "service: ${ssd} is in failed state — check: journalctl -u ${ssd}" ;;
-        inactive)
-            print_verbose "service ${ssd} is ${active_state}" ;;
-        *)
-            log_warn "service: ${ssd} has unexpected active state: ${active_state}" ;;
+            log_warn "service: ${ssd} is in failed state - check journalctl -u ${ssd} .";;
+        inactive|*)
+            log_warn "service is ${ssd} is ${active_state} .";;
     esac
 
 }
@@ -643,7 +638,44 @@ check_systemd_service() {
 #  Profile functions - Listing and Loading
 #
 # =============================================================================
-#list_libs - List all the libraries available at ./libs
+# _find_libs — emit relative paths of every lib .sh file, sorted.
+# Mirrors _find_profiles: depth-1 files first (ungrouped), then subdirectories.
+_find_libs() {
+    if [[ ! -d "${FIO_TEST_LIB}" ]]; then
+        print_fail "Lib directory not found: ${FIO_TEST_LIB}"
+        return 1
+    fi
+    # Top-level libs: lib/lib_foo.sh (no subdirectory)
+    find "${FIO_TEST_LIB}" -mindepth 1 -maxdepth 1 -type f -name "*.sh" \
+        | sort \
+        | sed "s|^${FIO_TEST_LIB}/||"
+    # Nested libs: lib/docker/lib_docker.sh
+    find "${FIO_TEST_LIB}" -mindepth 2 -maxdepth 5 -type f -name "*.sh" \
+        | sort \
+        | sed "s|^${FIO_TEST_LIB}/||"
+}
+
+# _list_lib_functions <absolute_path>
+# Print indented lib_* function names found in a lib file.
+_list_lib_functions() {
+    local lib_path="$1"
+    grep -E '^(lib_[a-z0-9_]+)\(\)' "${lib_path}" 2>/dev/null \
+        | sed 's/() *{.*//' \
+        | while IFS= read -r fn; do
+            printf '      %s  %s\n' "$(_color_dim '·')" "$(_color_yellow "${fn}")"
+        done
+}
+
+# list_libs — list all lib modules grouped by subdirectory.
+# Mirrors list_profiles layout:
+#
+#   group_name
+#     ▸  group/lib_module.sh
+#          · lib_module_kconfig
+#          · lib_module_cmds        <- only shown when DETAILED=1
+#
+# DETAILED=0  (default) : file paths only
+# DETAILED=1            : also lists exported lib_* functions under each file
 list_libs() {
     print_section "Available Lib Modules ${FIO_TEST_LIB}"
 
@@ -652,27 +684,37 @@ list_libs() {
         return 0
     fi
 
-    local -a libs #libs array
-    mapfile -t libs < <(find "${FIO_TEST_LIB}" -maxdepth 5 -name "*.sh" | sort)
+    local -a libs
+    mapfile -t libs < <(_find_libs 2>/dev/null)
 
     if [[ "${#libs[@]}" -eq 0 ]]; then
         print_warn "No lib modules found in: ${FIO_TEST_LIB}"
         return 0
     fi
 
-    for lib in "${libs[@]}"; do
-        local name; name="$(basename "${lib}")"
-        if [[ "${DETAILED}" == 1 ]]; then
-            printf ' %s  %s\n' "$(_color_bold "$(_color_cyan "${name}")")" \
-                "$(_color_dim "(source \"${FIO_TEST_LIB}/${name}\")")"
-            # Extract exported function names (lines starting with a lib_ function def)
-            grep -E '^(lib_[a-z0-9_]+)\(\)' "${lib}" \
-                | sed 's/() *{.*//' \
-                | while read -r fn; do
-                    printf '    %s  %s\n' "$(_color_dim '·')" "$(_color_yellow "${fn}")"
-                done
+    local prev_group=""
+    for rel in "${libs[@]}"; do
+        # Determine the group (first path component).
+        # Top-level files (no /) get the synthetic group "lib".
+        local group
+        if [[ "${rel}" == */* ]]; then
+            group="$(echo "${rel}" | cut -d/ -f1)"
         else
-                printf ' %s  %s\n' "$(_color_bold "$(_color_cyan "${name}")")"
+            group="lib"
+        fi
+
+        # Print group header whenever the group changes
+        if [[ "${group}" != "${prev_group}" ]]; then
+            printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${group}")")"
+            prev_group="${group}"
+        fi
+
+        # File entry — same ▸ arrow style as list_profiles
+        printf '    %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel}")"
+
+        # Detailed mode: indent lib_* functions under the file entry
+        if [[ "${DETAILED}" -eq 1 ]]; then
+            _list_lib_functions "${FIO_TEST_LIB}/${rel}"
         fi
     done
     printf '\n'
@@ -750,8 +792,8 @@ _resolve_profile() {
         realpath "${arg}"
         return 0
     fi
-    if [[ -f "${FIO_TEST_PROFILES}/${arg}" ]]; then
-        realpath "${FIO_TEST_PROFILES}/${arg}"
+    if [[ -f "${FIO_TEST_PROFILES/${arg}}" ]]; then
+        realpath "${FIO_TEST_PROFILES/${arg}}"
         return 0
     fi
     local candidate
@@ -895,7 +937,7 @@ run_all() {
 
 #write_report [file] - defaults to fiocheck_report_<timestamp>.txt
 write_report(){
-    local out="${1:-fiocheck_report_$(date '+%Y%m%d_%H%M%S')}"
+    local out="${1:fiocheck_report_$(date '+%Y%m%d_%H%M%S')}"
 
     {
         printf 'Foundries Check Report — version %s\n' "${SCRIPT_VERSION}"
@@ -920,7 +962,7 @@ write_report(){
 #
 # =============================================================================
 usage() {
-    local tool; tool="$(basename "$0")"
+    local tool="$(basename $0)"
     cat <<EOF
 $(_color_bold "${tool}") ${SCRIPT_VERSION} — Embedded Linux Test Framework
 
