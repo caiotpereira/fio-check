@@ -110,7 +110,7 @@ _log_report () {
 _filter(){
     local filter_t="$1"
     #No Filter
-    [[ -z $"${FILTER}" ]] && return 0
+    [[ -z "${FILTER}" ]] && return 0
     case "${filter_t}" in
         ok)   [[ "${FILTER}" == *"ok"*   ]] && return 0 ;;
         fail) [[ "${FILTER}" == *"fail"* ]] && return 0 ;;
