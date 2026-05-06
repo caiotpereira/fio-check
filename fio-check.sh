@@ -564,11 +564,11 @@ fi
 #   check_systemd_service ssh          enabled    # must be enabled
 #   check_systemd_service bluetooth    disabled   # must be disabled
 check_systemd_service() {
-    local ssd="${1:check_systemd_service: name required}"
+    local ssd="${1:?check_systemd_service: name required}"
     local expected_state="${2:-}"
     # local opt="${3:-}"
 
-    if [[ "${FIO_TEST_DRY_RUN}" -eq 1 ]]; then
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
         print_dryrun "check_systemd_service ${ssd}${expected_state:+ expected=${expected_state}}"
         return 0
     fi
