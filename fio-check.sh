@@ -33,6 +33,7 @@ NO_WARNING=0 #force warning as an error
 VERBOSE=0 #verbose mode
 QUIET=0 # quiet mode for automation
 DRY_RUN=0 #dry-run show the commands only
+LIB_FN="" #optional argument (--fn) to call a function on run-lib
 FILTER="" #options: warn | fail | "warn,fail"
 DETAILED=0 #don't|do show detailed information
 REPORT_FILE=""
@@ -53,10 +54,18 @@ _TEST_PASS=0
 _TEST_SKIP=0
 _TEST_FAIL=0
 
+#run_all profiles
 declare -a _RUNALL_PROFILES=()
 declare -A _RUNALL_PASS=()
 declare -A _RUNALL_FAIL=()
 declare -A _RUNALL_SKIP=()
+
+#run_all_libs
+
+declare -a _RUNALL_LIBS=()
+declare -A _RUNALL_LIBS_PASS=()
+declare -A _RUNALL_LIBS_FAIL=()
+declare -A _RUNALL_LIBS_SKIP=()
 
 #Internal Test Variable
 _FIO_TEST=0
@@ -184,61 +193,79 @@ fi
 # =============================================================================
 
 #check_lib_dependecy <"library_name"> ["minimal_req_version"]
+# 3 ways check - each tier is tried in order , first hit wins:
+# 1. pkgconfig - version-aware when available
+# 2 ldconfig - fast cache lookup
+# 3.find - filesystem check , universal check
+# Version checking is only available using option 1
+
 check_lib_dependency() {
     local lib="${1:?check_lib_dependency: library name required}"
-    local hint=""
     local min_ver="${2:-}"
 
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        # _dry_print "check_lib_dependency ${lib}${hint:+ (hint: ${hint})}"
-         print_dryrun "check_lib_dependency ${lib}:${min_ver}"
+        print_dryrun "check_lib_dependency ${lib}${min_ver:+ min_ver=${min_ver}}"
         return 0
     fi
 
     local found=0
-    #1 - pkg-config method - Version verification OK
-    if ! command -v pkg-config & 2>/dev/null; then
+    local ver=""
+    #1 - pkg-config method - Version verification
+    if [[ -n "$(command -v pkg-config)" ]]; then
         print_verbose "pkg-config --exists ${lib}"
-        pkg-config --exists "${lib}" 2>/dev/null && found=1 || true
-
-        local ver;
-        ver=$(pkg-config --modversion "${lib}" 2>/dev/null)
-        print_verbose "pkg-config --modversion ${lib}"
-
-        if [[ -n "${min_ver}" ]]; then
+        if pkg-config --exists "${lib}" 2>/dev/null; then
             found=1
-            if pkg-config --atleast-version="${min_ver}" "${lib}" 2>/dev/null; then
-                print_verbose "pkg-config --atleast-version= ${min_ver} ${lib}"
-                log_ok "Library dependency: ${lib} ${ver} (≥ ${min_ver} ✔)"
-            else
-                log_fail "Library dependency: ${lib} ${ver} - MIN_VERSION ≥ ${min_ver}"
-                return 1
-            fi
-        else
-            log_ok "Library dependency: ${lib} ${ver}"
-        fi
-    else
-        log_fail "Library dependency: ${lib} ${ver} (pkg-config: ${lib} - NOT FOUND)"
-        return 1
-    fi
-    if [[ "${found}" -eq 0 ]]; then
-        print_verbose "find /lib /usr/lib /usr/local/lib /lib32 /usr/lib32 /lib64 /usr/lib64 -name ${lib}*.so.*  2>/dev/null | grep -q ."
+            ver="$(pkg-config --modversion "${lib}" 2>/dev/null || true)"
+            print_verbose "pkg-config --modversion ${lib} -> ${ver}"
 
-        if find /lib \
-            /usr/lib \
-            /usr/local/lib \
-            /lib32 \
-            /usr/lib32 \
-            /lib64 \
-            /usr/lib64 -name "${lib}*.so.*" 2>/dev/null | grep -q .; then
-                log_ok "Library dependency: ${lib}";
-                #@TODO decide if this message is a warning|ok|info
-                [[ -n "${min_ver}" ]] && log_skip "Skip ${lib} version ${ver} check - (cannot identify the version)";
-        else
-                log_fail "Library dependency: ${lib} ${ver} - NOT FOUND"
-                return 1
+            if [[ -n "${min_ver}" ]]; then
+                if pkg-config --atleast-version="${min_ver}" "${lib}" 2>/dev/null; then
+                    log_ok "Library: ${lib} ${ver} (>= ${min_ver})"
+                else
+                    log_fail "Library: ${lib} ${ver} — required >= ${min_ver}"
+                    return 1
+                fi
+            else
+                log_ok "Library: ${lib} ${ver}"
+            fi
+            return 0
         fi
     fi
+    #2 - ldconfig cache
+        if [[ -n "$(command -v ldconfig)" ]]; then
+        print_verbose "ldconfig -p | grep ${lib}"
+        if [[ -n "$(ldconfig -p 2>/dev/null | grep "${lib}")" ]]; then
+            found=1
+            print_verbose "ldconfig: ${lib} found in cache"
+        fi
+    fi
+
+    #3 - find filesystem
+        if [[ "${found}" -eq 0 ]]; then
+        print_verbose "find /lib /usr/lib ... -name lib${lib}*.so*"
+        local d
+        local search_dirs=(/lib /usr/lib /usr/local/lib /lib32 /usr/lib32 /lib64 /usr/lib64)
+        local existing_dirs=()
+        for d in "${search_dirs[@]}"; do
+            [[ -d "${d}" ]] && existing_dirs+=("${d}")
+        done
+        if [[ "${#existing_dirs[@]}" -gt 0 ]]; then
+            if [[ -n "$(find "${existing_dirs[@]}" \
+                    -name "lib${lib}*.so*" 2>/dev/null | head -1)" ]]; then
+                found=1
+            fi
+        fi
+    fi
+    if [[ "${found}" -eq 1 ]]; then
+        log_ok "Library: ${lib}${ver:+ ${ver}}"
+        if [[ -n "${min_ver}" ]]; then
+            log_skip "Library: ${lib} — version >= ${min_ver} requested but cannot verify (pkg-config not available)"
+        fi
+        return 0
+    fi
+
+    log_fail "Library: ${lib} — NOT FOUND"
+    return 1
 }
 
 #check_lib_dependencies <lib1> [lib2....]
@@ -567,72 +594,76 @@ fi
 #   check_systemd_service ssh          enabled    # must be enabled
 #   check_systemd_service bluetooth    disabled   # must be disabled
 check_systemd_service() {
-    local ssd="${1:check_systemd_service: name required}"
+    local ssd="${1:?check_systemd_service: name required}"
     local expected_state="${2:-}"
-    # local opt="${3:-}"
-
-    if [[ "${FIO_TEST_DRY_RUN}" -eq 1 ]]; then
+ 
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
         print_dryrun "check_systemd_service ${ssd}${expected_state:+ expected=${expected_state}}"
         return 0
     fi
-
+ 
     #Verify if the distro supports systemd
-    if [[ ! $(command -v systemctl &>/dev/null) ]]; then
-        log_fail "Systemd Service: ${ssd} - systemctl not available "
-        return 1
+    if [[ -z "$(command -v systemctl)" ]]; then
+        log_skip "service: ${ssd} — systemctl not available (not a systemd system?)"
+        return 0
     fi
-
+ 
     #verify if the service exists
-    local service_unit;
-    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null?head -1)"
-
+    local service_unit
+    service_unit="$(systemctl list-unit-files "${ssd}.service" --no-legend 2>/dev/null | head -1)"
+ 
     if [[ -z "${service_unit}" ]]; then
-        log_fail "service: ${ssd} - Unit file not found."
+        log_fail "service: ${ssd} — unit file not found"
         return 1
     fi
-
-
-    local enable_state;
-    local active_state;
+ 
+    local enable_state
+    local active_state
     #Check the systemd service state
     enable_state="$(awk '{print $2}' <<< "${service_unit}")"
     #Check Runtime (Active)
     active_state="$(systemctl is-active "${ssd}" 2>/dev/null || true)"
     #Report
-    local report_msg="service: ${ssd} enable=${enable_state} active=${active_state}"
-
+    local report_msg="service: ${ssd}  enable=${enable_state}  active=${active_state}"
+ 
+    # Masked guard — always fail regardless of expected_state
+    if [[ "${enable_state}" == "masked" ]]; then
+        log_fail "${report_msg} — masked units cannot be started"
+        return 1
+    fi
+ 
     #Verification with pre condition
     if [[ -n "${expected_state}" ]]; then
         if [[ "${enable_state}" == "${expected_state}" ]]; then
             log_ok "${report_msg}"
         else
-            log_fail "${report_msg} - expected enable=${expected_state}"
+            log_fail "${report_msg} — expected enable=${expected_state}"
             return 1
         fi
     else
         #No Expected state
         case "${enable_state}" in
             enabled|static)
-                log_ok "${report_msg}";;
-            masked)
-                log_fail "${report_msg} - masked unit cannot be started.";;
+                log_ok "${report_msg}" ;;
             disabled)
                 log_ok "${report_msg}"
-                log_warn "service: ${ssd} is disabled - it will not start on boot.";;
+                log_warn "service: ${ssd} is disabled — it will not start on boot" ;;
             *)
-                log_ok "${report_msg}"
+                log_ok "${report_msg}" ;;
         esac
     fi
+ 
     # Verify separately if the unit is inactive or failed regardless of enable state
     case "${active_state}" in
         active|activating)
-            log_ok "service: ${ssd} is running.";;
+            print_verbose "service ${ssd} is running" ;;
         failed)
-            log_warn "service: ${ssd} is in failed state - check journalctl -u ${ssd} .";;
-        inactive|*)
-            log_warn "service is ${ssd} is ${active_state} .";;
+            log_warn "service: ${ssd} is in failed state — check: journalctl -u ${ssd}" ;;
+        inactive)
+            print_verbose "service ${ssd} is ${active_state}" ;;
+        *)
+            log_warn "service: ${ssd} has unexpected active state: ${active_state}" ;;
     esac
-
 }
 
 # =============================================================================
@@ -786,24 +817,234 @@ _reset_lib_env(){
     done < <(compgen -v | grep -E '^_LIB_.+_LOADED$')
 }
 
+
+# =============================================================================
+#  Lib runner functions — run-lib / run-all-libs
+#
+# =============================================================================
+
+# _resolve_lib <arg> — echo the absolute path of a lib file or return 1.
+# Accepts: absolute path, relative-to-cwd, or relative-to-FIO_TEST_LIB.
+# _resolve_lib <arg> — print the absolute path of a lib file and return 0,
+# or print nothing and return 1.
+# Accepts: absolute path, relative-to-cwd, or relative-to-FIO_TEST_LIB.
+# Does not use realpath — not available on all embedded targets.
+_resolve_lib() {
+    local arg="$1"
+    local candidate=""
+
+    # 1. Absolute or relative-to-cwd
+    if [[ -f "${arg}" ]]; then
+        candidate="${arg}"
+    # 2. Relative to FIO_TEST_LIB
+    elif [[ -f "${FIO_TEST_LIB}/${arg}" ]]; then
+        candidate="${FIO_TEST_LIB}/${arg}"
+    else
+        return 1
+    fi
+
+    # Return absolute path without relying on realpath.
+    # cd + pwd handles symlinks and relative components portably.
+    local dir file
+    dir="$(cd "$(dirname "${candidate}")" 2>/dev/null && pwd)" || return 1
+    file="$(basename "${candidate}")"
+    printf '%s/%s' "${dir}" "${file}"
+}
+
+# run_lib <lib_path> [fn_override]
+#
+# Sources a single lib file and calls one of its functions:
+#   - LIB_FN (set by --fn flag)          highest priority
+#   - fn_override positional arg         second priority
+#   - lib_<basename>_all derived name    default fallback
+#
+# Resets counters and lib guards before each run so the lib gets a
+# clean environment, matching the behaviour of load_profile.
+#
+# Usage (via CLI):
+#   ./fio-check.sh run-lib foundries/lib_fioconfig.sh
+#   ./fio-check.sh --fn lib_fioconfig_cmd run-lib foundries/lib_fioconfig.sh
+#   ./fio-check.sh --dry-run run-lib foundries/lib_fiovb.sh
+#   ./fio-check.sh --filter fail run-lib foundries/lib_aktualizr.sh
+run_lib() {
+    local lib_arg="${1:?run-lib: lib path required}"
+    local fn_override="${2:-}"
+    local lib_path
+
+    if ! lib_path="$(_resolve_lib "${lib_arg}")"; then
+        print_fail "Lib not found: ${lib_arg}"
+        print_info "Run '$(basename "$0") list-libs' to see available libs."
+        return 1
+    fi
+
+    # Reset state for this run
+    _TEST_PASS=0; _TEST_FAIL=0; _TEST_SKIP=0
+    _REPORT_LINES=()
+    _reset_lib_env
+
+    [[ -n "${FILTER}"    ]] && print_info "Filter active: showing only [${FILTER^^}] results"
+    [[ "${DRY_RUN}" -eq 1 ]] && print_info "Dry-run active: checks will be listed but not executed"
+
+    print_section "Running Lib: $(basename "${lib_path}")"
+    log_info "Path: ${lib_path}"
+    log_info "Date: $(date '+%Y-%m-%d %H:%M:%S')"
+    log_info "Host: $(uname -n)  Kernel: $(uname -r)  Arch: $(uname -m)"
+
+    # Source the lib — this only defines lib_* functions in the current shell.
+    # Nothing executes at source time so set +e is not needed here.
+    # shellcheck disable=SC1090
+    source "${lib_path}"
+
+    # Determine which function to call — priority: --fn flag > positional > _all
+    local fn_to_call
+    if [[ -n "${LIB_FN}" ]]; then
+        fn_to_call="${LIB_FN}"
+    elif [[ -n "${fn_override}" ]]; then
+        fn_to_call="${fn_override}"
+    else
+        # Derive _all name from filename: lib_fioconfig.sh -> lib_fioconfig_all
+        fn_to_call="$(basename "${lib_path}" .sh)_all"
+    fi
+
+    if declare -f "${fn_to_call}" &>/dev/null; then
+        set +e
+        "${fn_to_call}"
+        set -e
+    else
+        log_warn "Function not found: ${fn_to_call} — lib sourced but nothing called"
+        log_info "Available functions in this lib:"
+        grep -E '^lib_[a-z0-9_]+\(\)' "${lib_path}" 2>/dev/null             | sed 's/() *{.*//'             | while IFS= read -r fn; do
+                log_info "  ${fn}"
+            done
+    fi
+
+    # Reset LIB_FN after use so it does not carry over to run_all_libs
+    LIB_FN=""
+
+    # Summary
+    print_section "Results"
+    printf '  %s  %s  %s 
+
+'         "$(_color_green "PASS: ${_TEST_PASS}")"         "$(_color_red   "FAIL: ${_TEST_FAIL}")"         "$(_color_dim   "SKIP: ${_TEST_SKIP}")"
+
+    [[ -n "${REPORT_FILE}" ]] && write_report "${REPORT_FILE}"
+    [[ "${_TEST_FAIL}" -eq 0 ]]
+}
+
+# run_all_libs — discover every lib file, run each one's _all function,
+# and print a combined summary table.  Mirrors run_all for profiles.
+#
+# Usage:
+#   ./fio-check.sh run-all-libs
+#   ./fio-check.sh --dry-run run-all-libs
+#   ./fio-check.sh --filter fail run-all-libs
+#   ./fio-check.sh -r report.txt run-all-libs
+run_all_libs() {
+    local -a all_libs
+    mapfile -t all_libs < <(_find_libs 2>/dev/null)
+
+    if [[ "${#all_libs[@]}" -eq 0 ]]; then
+        print_warn "No lib modules found in: ${FIO_TEST_LIB}"
+        return 0
+    fi
+
+    local _orig_report="${REPORT_FILE}"
+    local _any_fail=0
+
+    print_section "Run All Libs — ${#all_libs[@]} module(s)"
+
+    for rel in "${all_libs[@]}"; do
+        local lname; lname="${rel%.sh}"
+        printf '
+'
+        print_section "▶ ${lname}"
+
+        # Per-lib report file when -r was given
+        if [[ -n "${_orig_report}" ]]; then
+            REPORT_FILE="${_orig_report%.txt}_${lname//\//_}.txt"
+        fi
+
+        # Run and capture outcome — do not let one failure abort the loop
+        if run_lib "${rel}" 2>&1; then
+            _RUNALL_LIBS_PASS["${rel}"]="${_TEST_PASS}"
+            _RUNALL_LIBS_FAIL["${rel}"]=0
+            _RUNALL_LIBS_SKIP["${rel}"]="${_TEST_SKIP}"
+        else
+            _RUNALL_LIBS_PASS["${rel}"]="${_TEST_PASS}"
+            _RUNALL_LIBS_FAIL["${rel}"]="${_TEST_FAIL}"
+            _RUNALL_LIBS_SKIP["${rel}"]="${_TEST_SKIP}"
+            _any_fail=1
+        fi
+        _RUNALL_LIBS+=("${rel}")
+    done
+
+    # Restore original report path
+    REPORT_FILE="${_orig_report}"
+
+    # Summary table — same format as run_all (profiles)
+    print_section "Run All Libs — Summary"
+    local col_w=48
+    printf '  %-*s  %s  %s  %s
+' "${col_w}" "Lib Module"         "$(_color_green 'PASS')" "$(_color_red 'FAIL')" "$(_color_dim 'SKIP')"
+    printf '  %s
+' "$(printf '%.0s─' $(seq 1 $(( col_w + 22 ))))"
+
+    local total_pass=0 total_fail=0 total_skip=0
+    for rel in "${_RUNALL_LIBS[@]}"; do
+        local p="${_RUNALL_LIBS_PASS[${rel}]:-0}"
+        local f="${_RUNALL_LIBS_FAIL[${rel}]:-0}"
+        local s="${_RUNALL_LIBS_SKIP[${rel}]:-0}"
+        (( total_pass += p )) || true
+        (( total_fail += f )) || true
+        (( total_skip += s )) || true
+
+        local status
+        if [[ "${f}" -gt 0 ]]; then
+            status="$(_color_red   '✗ FAIL')"
+        else
+            status="$(_color_green '✓ PASS')"
+        fi
+        printf '  %-*s  %s  p:%-4d f:%-4d s:%-4d
+'             "${col_w}" "${rel%.sh}" "${status}" "${p}" "${f}" "${s}"
+    done
+
+    printf '  %s
+' "$(printf '%.0s─' $(seq 1 $(( col_w + 22 ))))"
+    printf '  %-*s       %s  %s  %s
+
+' "${col_w}" "TOTAL"         "$(_color_green "p:${total_pass}")"         "$(_color_red   "f:${total_fail}")"         "$(_color_dim   "s:${total_skip}")"
+
+    return "${_any_fail}"
+}
+
 #_resolve_profile <arg> - echo the absolute path or return 1
+# Accepts: absolute path, relative-to-cwd, relative-to-FIO_TEST_PROFILES,
+# or a folder name (finds the first .sh inside it).
+# Does not use realpath — not available on all embedded targets.
 _resolve_profile() {
     local arg="$1"
+    local candidate=""
+    local dir file
+
+    # 1. Absolute or relative-to-cwd
     if [[ -f "${arg}" ]]; then
-        realpath "${arg}"
-        return 0
+        candidate="${arg}"
+    # 2. Relative to FIO_TEST_PROFILES (fixed: was using pattern substitution)
+    elif [[ -f "${FIO_TEST_PROFILES}/${arg}" ]]; then
+        candidate="${FIO_TEST_PROFILES}/${arg}"
+    else
+        # 3. Folder name — find first .sh inside
+        candidate="$(find "${FIO_TEST_PROFILES}/${arg}" \
+            -maxdepth 5 -name "*.sh" 2>/dev/null | sort | head -1)"
     fi
-    if [[ -f "${FIO_TEST_PROFILES/${arg}}" ]]; then
-        realpath "${FIO_TEST_PROFILES/${arg}}"
-        return 0
-    fi
-    local candidate
-    candidate="$(find "${FIO_TEST_PROFILES}/${arg}" -maxdepth 5 -name "*.sh" 2>/dev/null | sort | head -1)"
-    if [[ -n "${candidate}" ]]; then
-        realpath "${candidate}"
-        return 0
-    fi
-    return 1
+
+    [[ -z "${candidate}" ]] && return 1
+    [[ -f "${candidate}" ]] || return 1
+
+    # Absolute path without realpath
+    dir="$(cd "$(dirname "${candidate}")" 2>/dev/null && pwd)" || return 1
+    file="$(basename "${candidate}")"
+    printf '%s/%s' "${dir}" "${file}"
 }
 
 #load_profile <relative_or_absolute_path>
@@ -932,6 +1173,35 @@ run_all() {
 }
 
 # =============================================================================
+#  Lib runner functions — run-lib / run-all-libs
+#
+# =============================================================================
+
+#_resolve_lib <arg>  return the absolute path of a lib file or return failure
+# Accepts: absolute/relative-to-FIO_TEST_LIB, relative path
+_resolve_lib() {
+    local arg="$1"
+    local candidate=""
+
+    # 1. Absolute or relative-to-cwd
+    if [[ -f "${arg}" ]]; then
+        candidate="${arg}"
+   # 2. Relative to FIO_TEST_LIB
+    elif [[ -f "${FIO_TEST_LIB}/${arg}" ]]; then
+        candidate="${FIO_TEST_LIB}/${arg}"
+    else
+        return 1
+    fi
+
+    # Return absolute path without relying on realpath.
+    # cd + pwd handles symlinks and relative components portably.
+    local dir file
+    dir="$(cd "$(dirname "${candidate}")" 2>/dev/null && pwd)" || return 1
+    file="$(basename "${candidate}")"
+    printf '%s/%s' "${dir}" "${file}"
+}
+
+# =============================================================================
 #  Report Creation
 #
 # =============================================================================
@@ -974,7 +1244,9 @@ $(_color_bold "COMMANDS")
   list-profile             List all available profiles
   list-libs                List lib modules and their exported functions
   load <profile>           Load and run a profile (.sh path or folder name)
+  run-lib <lib> [fn]       Run the <lib>_all function or a specific function fn (when provided)
   run-all                  Run every profile and print a combined summary
+  run-all-libs             Run every lib's _all function and print a summary
   check-deps <lib...>      Check shared library dependencies
   check-kconfig <SYM> [v] Check a kernel CONFIG symbol (optional expected value)
   check-cmd <cmd...>       Check that commands exist on PATH
@@ -986,6 +1258,8 @@ $(_color_bold "OPTIONS")
   -r, --report <file>      Auto-write report after load / per-profile in run-all
   --filter <types>         Show only matching result types (comma-separated)
                            Types: fail, warn   e.g. --filter fail,warn
+  --fn <function>          Call a specific lib function instead of _all
+                           Only applies to run-lib command
   --dry-run                List what each check would do without executing it
   --no-color               Disable ANSI colors
   --profiles-dir <dir>     Override profiles directory (default: ./profiles)
@@ -1040,11 +1314,15 @@ main() {
                 export FIO_TEST_FILTER="${FILTER}"
                 shift
                 ;;
+            --fn)
+                LIB_FN="${2:?--fn requres a function name}"
+                shift
+                ;;
             --dry-run)
                 DRY_RUN=1
                 export FIO_TEST_DRY_RUN=1
                 ;;
-            list-profiles|list-libs|load|run-all|check-deps|check-kconfig|check-cmd|report|help)
+            list-profiles|list-libs|load|run-lib|run-all|run-all-libs|check-deps|check-kconfig|check-cmd|report|help)
                 cmd="$1"; shift; break ;;
             -h|--help)          usage; exit 0 ;;
             *)  print_fail "Unknown option: $1"; usage; exit 1 ;;
@@ -1056,7 +1334,9 @@ main() {
         list-profiles) list_profiles ;;
         list-libs)     list_libs ;;
         load)          load_profile "$@" ;;
+        run-lib)       run_lib "$@";;
         run-all)       run_all ;;
+        run-all-libs)  run_all_libs ;;
         check-deps)    check_lib_dependencies "$@" ;;
         check-kconfig) check_kconfig "$@" ;;
         check-cmd)     check_cmds "$@" ;;

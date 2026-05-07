@@ -70,12 +70,9 @@ lib_fioconfig_lib_check() {
         log_warn "Library: libp11 not found — HSM/PKCS#11 support will be unavailable"
     fi
 
-    # libdl — required by libp11 to dlopen the PKCS#11 module at runtime
-    check_lib_dependency dl "libc / glibc"
-
     # libcrypto / openssl — used by the TLS transport layer
-    check_lib_dependency crypto "openssl / libssl-dev"
-    check_lib_dependency ssl    "openssl / libssl-dev"
+    check_lib_dependency crypto
+    check_lib_dependency ssl
 }
 
 # ---------------------------------------------------------------------------
