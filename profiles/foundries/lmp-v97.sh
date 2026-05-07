@@ -19,6 +19,11 @@
 # =============================================================================
 
 source "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
+source "${FIO_TEST_LIB}/foundries/lib_lib_compose_apps_early_start_all.sh"
+aource "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
+source "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
+source "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
+source "${FIO_TEST_LIB}/foundries/lib_lmp_device_register.sh"
 
 # ---------------------------------------------------------------------------
 # Hooks
@@ -47,3 +52,17 @@ print_section "Verify Aktualizr-lite"
 lib_aktualizr_set_version "${_AKLITE_VERSION}"
 lib_aktualizr_cmd
 
+print_section "Verify compose_apps_early_start"
+lib_compose_apps_early_start_all
+
+print_section "Verify Fioconfig"
+lib_fioconfig_all
+
+print_section "Verify Composectl"
+lib_composectl_all
+
+print_section "Verify optee-fiovb"
+lib_fiovb_all
+
+print_section "Verify lmp-device-register"
+lib_lmp_device_register_all
