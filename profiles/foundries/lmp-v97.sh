@@ -62,7 +62,11 @@ print_section "Verify Composectl"
 lib_composectl_all
 
 print_section "Verify optee-fiovb"
-lib_fiovb_all
+if [[ "$(uname -m)" == "aarch64" ]]; then
+    lib_fiovb_all
+else
+    log_skip "optee-fiovb: skipped — requires aarch64 (detected: $(uname -m))"
+fi
 
 print_section "Verify lmp-device-register"
 lib_lmp_device_register_all
