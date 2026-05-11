@@ -20,7 +20,7 @@
 
 source "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
 source "${FIO_TEST_LIB}/foundries/lib_lib_compose_apps_early_start_all.sh"
-aource "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
+source "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
 source "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
 source "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
 source "${FIO_TEST_LIB}/foundries/lib_lmp_device_register.sh"
