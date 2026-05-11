@@ -1054,7 +1054,7 @@ load_profile() {
 
     if [[ ! -f "${profile_path}" ]]; then
         print_fail "Profile not found: ${profile_path}"
-        print_info "Run '$(basename "$0") list' to see available profiles."
+        print_info "Run '$(basename "$0") list-profiles' to see available profiles."
         return 1
     fi
 
