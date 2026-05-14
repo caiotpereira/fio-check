@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/foundries/lib_composectl.sh — Foundries.io Compose App manager (composectl)
 #
@@ -31,7 +31,7 @@
 # Sourced by profiles; never executed directly.
 # =============================================================================
 
-[[ -n "${_LIB_COMPOSECTL_LOADED:-}" ]] && return 0
+[ -n "${_LIB_COMPOSECTL_LOADED:-}" ] && return 0
 _LIB_COMPOSECTL_LOADED=1
 
 # ---------------------------------------------------------------------------
@@ -126,14 +126,14 @@ lib_composectl_cmd_version() {
 # lib_composectl_files_check — runtime paths and storage layout
 # ---------------------------------------------------------------------------
 lib_composectl_files_check() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_composectl_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi
 
     # ── Docker socket ────────────────────────────────────────────────────────
     log_info "Checking Docker socket: /var/run/docker.sock"
-    if [[ -S /var/run/docker.sock ]]; then
+    if [ -S /var/run/docker.sock ]; then
         log_ok "Docker socket: /var/run/docker.sock present"
     else
         log_fail "Docker socket not found: /var/run/docker.sock — composectl cannot communicate with Docker"
@@ -143,13 +143,13 @@ lib_composectl_files_check() {
     # ── App store — restorable apps (default since LmP v85) ─────────────────
     local reset_apps_dir="/var/sota/reset-apps"
     log_info "Checking restorable app store: ${reset_apps_dir}"
-    if [[ -d "${reset_apps_dir}" ]]; then
+    if [ -d "${reset_apps_dir}" ]; then
         local app_count
         app_count="$(find "${reset_apps_dir}" -mindepth 1 -maxdepth 1 \
             -type d 2>/dev/null | wc -l)"
         log_ok "Restorable app store: ${reset_apps_dir} (${app_count} app(s))"
         # List app names if any are present
-        if [[ "${app_count}" -gt 0 ]]; then
+        if [ "${app_count}" -gt 0 ]; then
             find "${reset_apps_dir}" -mindepth 1 -maxdepth 1 -type d \
                 2>/dev/null | sed 's|.*/||' | sort \
                 | while IFS= read -r app; do
@@ -163,17 +163,17 @@ lib_composectl_files_check() {
     # ── App store — legacy compose type ─────────────────────────────────────
     local compose_apps_dir="/var/sota/compose-apps"
     log_info "Checking compose app store: ${compose_apps_dir}"
-    if [[ -d "${compose_apps_dir}" ]]; then
+    if [ -d "${compose_apps_dir}" ]; then
         local compose_count
         compose_count="$(find "${compose_apps_dir}" -mindepth 1 -maxdepth 1 \
             -type d 2>/dev/null | wc -l)"
         log_ok "Compose app store: ${compose_apps_dir} (${compose_count} app(s))"
-        if [[ "${compose_count}" -gt 0 ]]; then
+        if [ "${compose_count}" -gt 0 ]; then
             find "${compose_apps_dir}" -mindepth 1 -maxdepth 1 -type d \
                 2>/dev/null | sed 's|.*/||' | sort \
                 | while IFS= read -r app; do
                     # Check that each app directory has a docker-compose.yml
-                    if [[ -f "${compose_apps_dir}/${app}/docker-compose.yml" ]]; then
+                    if [ -f "${compose_apps_dir}/${app}/docker-compose.yml" ]; then
                         log_ok  "  app: ${app} (docker-compose.yml present)"
                     else
                         log_warn "  app: ${app} (docker-compose.yml missing)"
@@ -187,9 +187,9 @@ lib_composectl_files_check() {
     # ── Docker engine store ──────────────────────────────────────────────────
     local docker_store="/var/lib/docker"
     log_info "Checking Docker engine store: ${docker_store}"
-    if [[ -d "${docker_store}" ]]; then
+    if [ -d "${docker_store}" ]; then
         # Check overlay2 subdirectory is present (indicates overlay2 driver in use)
-        if [[ -d "${docker_store}/overlay2" ]]; then
+        if [ -d "${docker_store}/overlay2" ]; then
             log_ok "Docker store: ${docker_store} (overlay2 driver active)"
         else
             log_warn "Docker store: ${docker_store} present but overlay2 subdir missing — check storage driver"
@@ -201,12 +201,12 @@ lib_composectl_files_check() {
     # ── sota.toml app configuration ──────────────────────────────────────────
     local sota_toml="/var/sota/sota.toml"
     log_info "Checking compose apps configuration in sota.toml"
-    if [[ -f "${sota_toml}" ]]; then
+    if [ -f "${sota_toml}" ]; then
         # Surface the apps list from the [pacman] section
         local apps_list
         apps_list="$(grep -E '^\s*compose_apps\s*=' "${sota_toml}" 2>/dev/null \
             | head -1 | cut -d= -f2- | tr -d '"' | xargs || true)"
-        if [[ -n "${apps_list}" ]]; then
+        if [ -n "${apps_list}" ]; then
             log_ok "Configured apps in sota.toml: ${apps_list}"
         else
             log_info "No compose_apps list in sota.toml (all apps enabled or not yet configured)"
@@ -216,7 +216,7 @@ lib_composectl_files_check() {
         local app_type
         app_type="$(grep -E '^\s*type\s*=' "${sota_toml}" 2>/dev/null \
             | head -1 | cut -d= -f2 | tr -d '" ' || true)"
-        [[ -n "${app_type}" ]] && log_info "App type in sota.toml: ${app_type}"
+        [ -n "${app_type}" ] && log_info "App type in sota.toml: ${app_type}"
     else
         log_warn "sota.toml not found: ${sota_toml} — /var/sota not populated yet"
     fi
@@ -226,19 +226,19 @@ lib_composectl_files_check() {
 # lib_composectl_runtime_check — functional checks against live Docker daemon
 # ---------------------------------------------------------------------------
 lib_composectl_runtime_check() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_composectl_runtime_check (dry-run: system probe skipped)"
         return 0
     fi
 
     log_info "Checking composectl runtime"
 
-    if ! command -v composectl &>/dev/null; then
+    if ! command -v composectl >/dev/null 2>&1; then
         log_skip "composectl runtime check: binary not available"
         return 0
     fi
 
-    if [[ ! -S /var/run/docker.sock ]]; then
+    if [ ! -S /var/run/docker.sock ]; then
         log_skip "composectl runtime check: docker.sock not available"
         return 0
     fi
@@ -247,7 +247,7 @@ lib_composectl_runtime_check() {
     local ls_output
     if ls_output="$(composectl ls 2>/dev/null)"; then
         local installed_count
-        installed_count="$(echo "${ls_output}" | grep -c '.' || true)"
+        installed_count="$(printf '%s\n' "${ls_output}" | grep -c '.' || true)"
         log_ok "composectl ls: succeeded (${installed_count} app(s) listed)"
     else
         log_warn "composectl ls failed — Docker daemon may not be running or store is empty"

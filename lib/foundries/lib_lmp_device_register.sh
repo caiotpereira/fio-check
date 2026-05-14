@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/foundries/lib_lmp_device_register.sh
 #     Foundries.io Device Registration Tool (lmp-device-register)
@@ -54,7 +54,7 @@
 # Sourced by profiles; never executed directly.
 # =============================================================================
 
-[[ -n "${_LIB_LMP_DEVICE_REGISTER_LOADED:-}" ]] && return 0
+[ -n "${_LIB_LMP_DEVICE_REGISTER_LOADED:-}" ] && return 0
 _LIB_LMP_DEVICE_REGISTER_LOADED=1
 
 # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ lib_lmp_device_register_cmd() {
 # lib_lmp_device_register_files_check — config and post-registration state
 # ---------------------------------------------------------------------------
 lib_lmp_device_register_files_check() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_lmp_device_register_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi
@@ -134,7 +134,7 @@ lib_lmp_device_register_files_check() {
     # /var/sota/sql.db is created by aktualizr-lite on successful registration.
     # Its absence means the device has not completed registration yet.
     log_info "Checking registration state: /var/sota/sql.db"
-    if [[ -f /var/sota/sql.db ]]; then
+    if [ -f /var/sota/sql.db ]; then
         local db_size; db_size="$(stat -c '%s' /var/sota/sql.db 2>/dev/null || echo 0)"
         log_ok "Registration state: /var/sota/sql.db present (${db_size} bytes) — device is registered"
     else
@@ -144,7 +144,7 @@ lib_lmp_device_register_files_check() {
     # ── Config directory ─────────────────────────────────────────────────────
     local sota_conf_dir="/etc/sota"
     log_info "Checking config directory: ${sota_conf_dir}"
-    if [[ -d "${sota_conf_dir}" ]]; then
+    if [ -d "${sota_conf_dir}" ]; then
         log_ok "Config directory: ${sota_conf_dir}"
     else
         log_warn "Config directory not found: ${sota_conf_dir} — missing from image?"
@@ -155,7 +155,7 @@ lib_lmp_device_register_files_check() {
     # Absent on software-key builds — always warn, never fail.
     local hsm_conf="/etc/sota/hsm"
     log_info "Checking HSM config: ${hsm_conf}"
-    if [[ -f "${hsm_conf}" ]]; then
+    if [ -f "${hsm_conf}" ]; then
         log_ok "HSM config: ${hsm_conf} present (HSM registration mode)"
         # Validate required keys are present (values deliberately not logged)
         for key in HSM_MODULE HSM_PI HSM_SOPIN; do
@@ -169,9 +169,9 @@ lib_lmp_device_register_files_check() {
         local module_path
         module_path="$(grep '^HSM_MODULE=' "${hsm_conf}" 2>/dev/null \
             | cut -d= -f2 | tr -d '"' || true)"
-        if [[ -n "${module_path}" ]]; then
+        if [ -n "${module_path}" ]; then
             log_info "  HSM module path: ${module_path}"
-            if [[ -e "${module_path}" ]]; then
+            if [ -e "${module_path}" ]; then
                 log_ok  "  HSM module: ${module_path} exists"
             else
                 log_warn "  HSM module: ${module_path} not found on filesystem"
@@ -184,9 +184,9 @@ lib_lmp_device_register_files_check() {
     # ── Tag config file (optional) ────────────────────────────────────────────
     local tag_conf="/etc/sota/tag"
     log_info "Checking tag config: ${tag_conf}"
-    if [[ -f "${tag_conf}" ]]; then
+    if [ -f "${tag_conf}" ]; then
         local tag_val; tag_val="$(cat "${tag_conf}" 2>/dev/null | tr -d '[:space:]')"
-        if [[ -n "${tag_val}" ]]; then
+        if [ -n "${tag_val}" ]; then
             log_ok "Tag config: ${tag_conf} — tag='${tag_val}'"
         else
             log_warn "Tag config: ${tag_conf} exists but is empty"
@@ -198,15 +198,19 @@ lib_lmp_device_register_files_check() {
     # ── API token file (optional — used by auto-register only) ───────────────
     local token_file="/etc/lmp-device-register-token"
     log_info "Checking API token file: ${token_file}"
-    if [[ -f "${token_file}" ]]; then
+    if [ -f "${token_file}" ]; then
         # Token is sensitive — only confirm presence, never log its value
         log_ok "API token file: ${token_file} present (auto-register mode)"
         # Check permissions — should not be world-readable
         local perms; perms="$(stat -c '%a' "${token_file}" 2>/dev/null || true)"
-        if [[ -n "${perms}" ]] && (( 8#${perms} & 8#004 )); then
-            log_warn "API token file: ${token_file} is world-readable (permissions ${perms}) — tighten to 0600"
-        else
-            log_ok "API token file: permissions ${perms} (not world-readable)"
+        if [ -n "${perms}" ]; then
+            local perms_dec
+            perms_dec=$(printf '%d' "0${perms}" 2>/dev/null || echo 0)
+            if [ $(( perms_dec & 4 )) -ne 0 ]; then
+                log_warn "API token file: ${token_file} is world-readable (permissions ${perms}) — tighten to 0600"
+            else
+                log_ok "API token file: permissions ${perms} (not world-readable)"
+            fi
         fi
     else
         log_warn "API token file not found: ${token_file} — manual OAuth flow will be used (expected for interactive registration)"
@@ -220,27 +224,29 @@ lib_lmp_device_register_files_check() {
         "/var/sota/root.crt:Factory root CA"; do
         local path="${cred_file%%:*}"
         local desc="${cred_file##*:}"
-        if [[ -f "${path}" ]]; then
+        if [ -f "${path}" ]; then
             log_ok "  ${desc}: ${path}"
             # Validate cert expiry for PEM files
-            if [[ "${path}" == *.pem || "${path}" == *.crt ]] \
-               && command -v openssl &>/dev/null; then
-                if openssl x509 -in "${path}" -noout -checkend 0 &>/dev/null; then
-                    local expiry
-                    expiry="$(openssl x509 -in "${path}" -noout -enddate 2>/dev/null \
-                        | cut -d= -f2 || true)"
-                    log_ok  "    cert valid, expires: ${expiry}"
-                else
-                    log_fail "    cert EXPIRED: ${path} — re-registration or cert rotation required"
-                fi
-            fi
+            case "${path}" in
+                *.pem|*.crt)
+                    if command -v openssl >/dev/null 2>&1; then
+                        if openssl x509 -in "${path}" -noout -checkend 0 >/dev/null 2>&1; then
+                            local expiry
+                            expiry="$(openssl x509 -in "${path}" -noout -enddate 2>/dev/null \
+                                | cut -d= -f2 || true)"
+                            log_ok  "    cert valid, expires: ${expiry}"
+                        else
+                            log_fail "    cert EXPIRED: ${path} — re-registration or cert rotation required"
+                        fi
+                    fi ;;
+            esac
         else
             log_warn "  ${desc}: ${path} not found — device not yet registered"
         fi
     done
 
     # pkey.pem is only present when NOT using an HSM
-    if [[ -f /var/sota/pkey.pem ]]; then
+    if [ -f /var/sota/pkey.pem ]; then
         log_ok "  Device private key: /var/sota/pkey.pem (software key — no HSM)"
     else
         log_warn "  Device private key: /var/sota/pkey.pem not found — key is in HSM or device not registered"
@@ -255,13 +261,13 @@ lib_lmp_device_register_files_check() {
 # registration workflows do not install it, so absence is warn-only.
 # ---------------------------------------------------------------------------
 lib_lmp_device_register_service() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_lmp_device_register_service (dry-run: systemctl probe skipped)"
         return 0
     fi
 
     log_info "Checking lmp-device-auto-register service"
-    if ! command -v systemctl &>/dev/null; then
+    if ! command -v systemctl >/dev/null 2>&1; then
         log_skip "service check: systemctl not available"
         return 0
     fi
@@ -270,18 +276,18 @@ lib_lmp_device_register_service() {
     unit_line="$(systemctl list-unit-files "lmp-device-auto-register.service" \
         --no-legend 2>/dev/null | head -1)"
 
-    if [[ -z "${unit_line}" ]]; then
+    if [ -z "${unit_line}" ]; then
         log_warn "lmp-device-auto-register.service: not installed (manual registration workflow assumed)"
         return 0
     fi
 
-    local enable_state; enable_state="$(awk '{print $2}' <<< "${unit_line}")"
+    local enable_state; enable_state="$(printf '%s\n' "${unit_line}" | awk '{print $2}')"
     local active_state; active_state="$(systemctl is-active lmp-device-auto-register 2>/dev/null || true)"
 
     log_ok "lmp-device-auto-register.service: enable=${enable_state} active=${active_state}"
 
     # A failed auto-register service is important to surface
-    if [[ "${active_state}" == "failed" ]]; then
+    if [ "${active_state}" = "failed" ]; then
         log_warn "lmp-device-auto-register.service: in failed state — check: journalctl -u lmp-device-auto-register"
     fi
 }

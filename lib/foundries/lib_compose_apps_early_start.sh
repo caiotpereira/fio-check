@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/foundries/lib_compose_apps_early_start.sh
 #     compose-apps-early-start — preloaded compose app launcher
@@ -34,7 +34,7 @@
 # Sourced by profiles; never executed directly.
 # =============================================================================
 
-[[ -n "${_LIB_COMPOSE_APPS_EARLY_START_LOADED:-}" ]] && return 0
+[ -n "${_LIB_COMPOSE_APPS_EARLY_START_LOADED:-}" ] && return 0
 _LIB_COMPOSE_APPS_EARLY_START_LOADED=1
 
 # ---------------------------------------------------------------------------
@@ -49,14 +49,14 @@ lib_compose_apps_early_start_cmd() {
 # lib_compose_apps_early_start_files — installed and runtime file checks
 # ---------------------------------------------------------------------------
 lib_compose_apps_early_start_files() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_compose_apps_early_start_files (dry-run: filesystem probes skipped)"
         return 0
     fi
 
     # ── Installed script ─────────────────────────────────────────────────────
     local script="/usr/bin/compose-apps-early-start"
-    if [[ -f "${script}" ]]; then
+    if [ -f "${script}" ]; then
         log_ok "Script installed: ${script}"
     else
         log_warn "Script not found: ${script} — recipe not included in image"
@@ -65,11 +65,11 @@ lib_compose_apps_early_start_files() {
     # ── Runtime app list (/var/lmp/default-apps) ─────────────────────────────
     # Created at runtime — absence means all preloaded apps will be started.
     local default_apps="/var/lmp/default-apps"
-    if [[ -f "${default_apps}" ]]; then
+    if [ -f "${default_apps}" ]; then
         local app_count; app_count="$(grep -c '.' "${default_apps}" 2>/dev/null || echo 0)"
         log_ok "App list: ${default_apps} (${app_count} app(s) configured)"
         while IFS= read -r app; do
-            [[ -n "${app}" ]] && log_info "  app: ${app}"
+            [ -n "${app}" ] && log_info "  app: ${app}"
         done < "${default_apps}"
     else
         log_warn "App list not found: ${default_apps} — all preloaded apps will be started (file created at runtime)"
@@ -78,10 +78,10 @@ lib_compose_apps_early_start_files() {
     # ── Preloaded app store presence ─────────────────────────────────────────
     local found_any=0
     for store in /var/sota/reset-apps /var/sota/compose-apps; do
-        if [[ -d "${store}" ]]; then
+        if [ -d "${store}" ]; then
             local count; count="$(find "${store}" -mindepth 1 -maxdepth 1 \
                 -type d 2>/dev/null | wc -l)"
-            if [[ "${count}" -gt 0 ]]; then
+            if [ "${count}" -gt 0 ]; then
                 log_ok "Preloaded apps in ${store}: ${count} app(s)"
                 found_any=1
             else
@@ -89,7 +89,7 @@ lib_compose_apps_early_start_files() {
             fi
         fi
     done
-    if [[ "${found_any}" -eq 0 ]]; then
+    if [ "${found_any}" -eq 0 ]; then
         log_warn "No preloaded apps found in /var/sota/reset-apps or /var/sota/compose-apps"
     fi
 }

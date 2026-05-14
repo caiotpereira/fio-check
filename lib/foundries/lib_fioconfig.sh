@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/foundries/lib_fioconfig.sh — Foundries.io Configuration Daemon (fioconfig)
 #
@@ -28,10 +28,10 @@
 #
 # Sourced by profiles; never executed directly.
 # =============================================================================
- 
-[[ -n "${_LIB_FIOCONFIG_LOADED:-}" ]] && return 0
+
+[ -n "${_LIB_FIOCONFIG_LOADED:-}" ] && return 0
 _LIB_FIOCONFIG_LOADED=1
- 
+
 # ---------------------------------------------------------------------------
 # lib_fioconfig_kconfig — kernel requirements
 #
@@ -84,14 +84,14 @@ lib_fioconfig_cmd() {
 
     # pkcs11-tool — diagnostics for HSM slot and token management
     # optional — only needed when HSM is configured
-    if ! command -v pkcs11-tool &>/dev/null; then
+    if ! command -v pkcs11-tool >/dev/null 2>&1; then
         log_warn "Command: pkcs11-tool not found — HSM diagnostics unavailable (install opensc)"
     else
         log_ok "Command: pkcs11-tool ($(command -v pkcs11-tool))"
     fi
 
     # p11tool — GnuTLS PKCS#11 token listing (optional diagnostic)
-    if command -v p11tool &>/dev/null; then
+    if command -v p11tool >/dev/null 2>&1; then
         log_ok "Command: p11tool (optional PKCS#11 diagnostic)"
     fi
 
@@ -103,7 +103,7 @@ lib_fioconfig_cmd() {
 # lib_fioconfig_files_check — runtime paths and file checks
 # ---------------------------------------------------------------------------
 lib_fioconfig_files_check() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fioconfig_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi
@@ -111,13 +111,13 @@ lib_fioconfig_files_check() {
     # ── Daemon configuration ────────────────────────────────────────────────
     local daemon_conf="/etc/default/fioconfig"
     log_info "Checking daemon config: ${daemon_conf}"
-    if [[ -f "${daemon_conf}" ]]; then
+    if [ -f "${daemon_conf}" ]; then
         log_ok "Daemon config: ${daemon_conf}"
         # Surface the poll interval if configured
         local interval
         interval="$(grep -E '^DAEMON_INTERVAL=' "${daemon_conf}" 2>/dev/null \
             | cut -d= -f2 | tr -d '"' || true)"
-        [[ -n "${interval}" ]] && log_info "  DAEMON_INTERVAL=${interval}s"
+        [ -n "${interval}" ] && log_info "  DAEMON_INTERVAL=${interval}s"
     else
         log_warn "Daemon config not found: ${daemon_conf} — default 300s polling interval in use"
     fi
@@ -125,13 +125,13 @@ lib_fioconfig_files_check() {
     # ── OTA shared config ───────────────────────────────────────────────────
     local sota_toml="/var/sota/sota.toml"
     log_info "Checking OTA config: ${sota_toml}"
-    if [[ -f "${sota_toml}" ]]; then
+    if [ -f "${sota_toml}" ]; then
         log_ok "OTA config: ${sota_toml}"
         # Check for PKCS#11 module path — indicates HSM is configured
         local pkcs11_module
         pkcs11_module="$(grep -E 'tls_pkcs11_module|pkcs11' "${sota_toml}" 2>/dev/null \
             | head -1 || true)"
-        if [[ -n "${pkcs11_module}" ]]; then
+        if [ -n "${pkcs11_module}" ]; then
             log_ok "  HSM/PKCS#11 module configured in sota.toml"
             log_info "  ${pkcs11_module}"
         else
@@ -147,11 +147,11 @@ lib_fioconfig_files_check() {
     local factory_ca="/var/sota/factory_ca.pem"
 
     log_info "Checking mTLS client certificate: ${client_pem}"
-    if [[ -f "${client_pem}" ]]; then
+    if [ -f "${client_pem}" ]; then
         log_ok "mTLS client cert: ${client_pem}"
         # Validate cert is not expired
-        if command -v openssl &>/dev/null; then
-            if openssl x509 -in "${client_pem}" -noout -checkend 0 &>/dev/null; then
+        if command -v openssl >/dev/null 2>&1; then
+            if openssl x509 -in "${client_pem}" -noout -checkend 0 >/dev/null 2>&1; then
                 local expiry
                 expiry="$(openssl x509 -in "${client_pem}" -noout -enddate 2>/dev/null \
                     | cut -d= -f2 || true)"
@@ -166,7 +166,7 @@ lib_fioconfig_files_check() {
     fi
 
     log_info "Checking factory root CA: ${factory_ca}"
-    if [[ -f "${factory_ca}" ]]; then
+    if [ -f "${factory_ca}" ]; then
         log_ok "Factory root CA: ${factory_ca}"
     else
         log_warn "Factory root CA not found: ${factory_ca} — /var/sota not populated yet (device not registered?)"
@@ -175,7 +175,7 @@ lib_fioconfig_files_check() {
     # ── Persistent encrypted config ─────────────────────────────────────────
     local config_encrypted="/var/sota/config.encrypted"
     log_info "Checking encrypted config store: ${config_encrypted}"
-    if [[ -f "${config_encrypted}" ]]; then
+    if [ -f "${config_encrypted}" ]; then
         local size_b; size_b="$(stat -c '%s' "${config_encrypted}" 2>/dev/null || echo 0)"
         log_ok "Encrypted config: ${config_encrypted} (${size_b} bytes)"
     else
@@ -189,7 +189,7 @@ lib_fioconfig_files_check() {
         local secret_count
         secret_count="$(find "${secrets_dir}" -maxdepth 1 -type f 2>/dev/null | wc -l)"
         log_ok "Secrets tmpfs: ${secrets_dir} is mounted (${secret_count} file(s))"
-    elif [[ -d "${secrets_dir}" ]]; then
+    elif [ -d "${secrets_dir}" ]; then
         log_warn "Secrets dir exists but is not a tmpfs mount: ${secrets_dir}"
     else
         log_warn "Secrets dir not found: ${secrets_dir} — may not have been created yet"
@@ -198,12 +198,12 @@ lib_fioconfig_files_check() {
     # ── Handlers directory ───────────────────────────────────────────────────
     local handlers_dir="/usr/share/fioconfig/handlers"
     log_info "Checking handlers directory: ${handlers_dir}"
-    if [[ -d "${handlers_dir}" ]]; then
+    if [ -d "${handlers_dir}" ]; then
         local handler_count
         handler_count="$(find "${handlers_dir}" -maxdepth 1 -type f 2>/dev/null | wc -l)"
         log_ok "Handlers dir: ${handlers_dir} (${handler_count} handler(s))"
         # Warn if the cert renewal handler is absent (required for cert rotation)
-        if [[ -f "${handlers_dir}/renew-client-cert" ]]; then
+        if [ -f "${handlers_dir}/renew-client-cert" ]; then
             log_ok "  Handler: renew-client-cert (cert rotation support present)"
         else
             log_warn "  Handler: renew-client-cert not found — certificate rotation unavailable"

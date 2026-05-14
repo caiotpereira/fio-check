@@ -18,7 +18,7 @@
 #   FIOCHECK_DOCKER_SMOKE=1 ./basename $0 -r /tmp/docker_report.txt load docker
 # =============================================================================
 
-source "${FIO_TEST_LIB}/lib_docker.sh"
+. "${FIO_TEST_LIB}/lib_docker.sh"
 
 # ---------------------------------------------------------------------------
 # Hooks
@@ -29,7 +29,7 @@ fiocheck_pre_hook() {
     log_info "pre_hook: Docker validation started at $(date '+%Y-%m-%d %H:%M:%S')"
     log_info "pre_hook: kernel $(uname -r) / arch $(uname -m)"
 
-    if [[ "${FIOCHECK_DOCKER_SMOKE:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DOCKER_SMOKE:-0}" -eq 1 ]; then
         log_info "pre_hook: smoke test enabled (FIOCHECK_DOCKER_SMOKE=1)"
     else
         log_info "pre_hook: smoke test disabled (export FIOCHECK_DOCKER_SMOKE=1 to enable)"

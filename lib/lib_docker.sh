@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/docker.sh — Reusable Docker and Docker Compose checks
 #
@@ -10,7 +10,7 @@
 # Sourced by profiles; never executed directly.
 # =============================================================================
 
-[[ -n "${_LIB_DOCKER_LOADED:-}" ]] && return 0
+[ -n "${_LIB_DOCKER_LOADED:-}" ] && return 0
 _LIB_DOCKER_LOADED=1
 
 _DOCKER_VERSION="24.0.6"
@@ -159,7 +159,7 @@ lib_docker_kconfig_required() {
 # Docker needs cgroups properly mounted (v1 or v2).
 # ---------------------------------------------------------------------------
 lib_docker_cgroup_mount() {
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_run "lib_docker_cgroup_mount (dry-run: system probe skipped)"
         return 0
     fi
@@ -167,10 +167,10 @@ lib_docker_cgroup_mount() {
     log_info "Checking cgroup hierarchy"
 
     # cgroupv2 — unified hierarchy at /sys/fs/cgroup
-    if [[ "$(stat -f -c %t /sys/fs/cgroup 2>/dev/null)" == "63677270" ]]; then
+    if [ "$(stat -f -c %t /sys/fs/cgroup 2>/dev/null)" = "63677270" ]; then
         log_ok "cgroup hierarchy: cgroupv2 (unified)"
         local ctrl_file="/sys/fs/cgroup/cgroup.controllers"
-        if [[ -r "${ctrl_file}" ]]; then
+        if [ -r "${ctrl_file}" ]; then
             for ctrl in cpu cpuset io memory pids; do
                 if grep -qE "(^| )${ctrl}( |$)" "${ctrl_file}" 2>/dev/null; then
                     log_ok "  cgroup controller: ${ctrl}"
@@ -187,10 +187,10 @@ lib_docker_cgroup_mount() {
     cgroup_dir="$(awk '/[, ](cpu|cpuacct|cpuset|devices|freezer|memory)[, ]/ \
         && $3=="cgroup" { print $2; exit }' /proc/mounts 2>/dev/null || true)"
 
-    if [[ -n "${cgroup_dir}" ]]; then
+    if [ -n "${cgroup_dir}" ]; then
         log_ok "cgroup hierarchy: v1 mounted at ${cgroup_dir}"
         for subsys in cpu cpuacct cpuset devices freezer memory; do
-            if [[ -d "${cgroup_dir}/${subsys}" ]]; then
+            if [ -d "${cgroup_dir}/${subsys}" ]; then
                 log_ok "  cgroup subsystem: ${subsys}"
             else
                 log_warn "  cgroup subsystem missing: ${subsys}"
@@ -219,14 +219,14 @@ lib_docker_compose_cmds() {
     log_info "Checking Docker Compose availability"
 
     # v2 plugin: docker compose (space, not dash)
-    if docker compose version &>/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
         local v2_ver; v2_ver="$(docker compose version 2>/dev/null | head -1)"
         log_ok "Docker Compose v2 plugin: ${v2_ver}"
         return 0
     fi
 
     # v1 standalone: docker-compose
-    if command -v docker-compose &>/dev/null; then
+    if command -v docker-compose >/dev/null 2>&1; then
         local v1_ver; v1_ver="$(docker-compose --version 2>/dev/null | head -1)"
         log_ok "Docker Compose v1 standalone: ${v1_ver}"
         log_warn "Docker Compose v1 is deprecated — consider upgrading to v2 plugin"
@@ -241,14 +241,14 @@ lib_docker_compose_cmds() {
 # Functional — Docker daemon running and responsive
 # ---------------------------------------------------------------------------
 lib_docker_daemon() {
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         print_dryrun "lib_docker_daemon (dry-run: system probe skipped)"
         return 0
     fi
 
     log_info "Checking Docker daemon"
 
-    if docker info &>/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
         log_ok "Docker daemon: running and responsive"
 
         # Surface key daemon info
@@ -256,14 +256,15 @@ lib_docker_daemon() {
         local cgroup_driver;  cgroup_driver="$(docker info --format '{{.CgroupDriver}}' 2>/dev/null || true)"
         local server_ver;     server_ver="$(docker info --format '{{.ServerVersion}}' 2>/dev/null || true)"
 
-        [[ -n "${server_ver}"    ]] && log_info "  Docker server version: ${server_ver}"
-        [[ -n "${storage_driver}" ]] && log_info "  Storage driver: ${storage_driver}"
-        [[ -n "${cgroup_driver}"  ]] && log_info "  Cgroup driver: ${cgroup_driver}"
+        [ -n "${server_ver}"     ] && log_info "  Docker server version: ${server_ver}"
+        [ -n "${storage_driver}" ] && log_info "  Storage driver: ${storage_driver}"
+        [ -n "${cgroup_driver}"  ] && log_info "  Cgroup driver: ${cgroup_driver}"
 
         # Warn if using deprecated storage driver
-        if [[ "${storage_driver}" == "devicemapper" || "${storage_driver}" == "aufs" ]]; then
-            log_warn "  Storage driver '${storage_driver}' is deprecated — use overlay2"
-        fi
+        case "${storage_driver}" in
+            devicemapper|aufs)
+                log_warn "  Storage driver '${storage_driver}' is deprecated — use overlay2" ;;
+        esac
     else
         log_fail "Docker daemon: not running or not accessible (try: systemctl start docker)"
         return 1
@@ -274,17 +275,17 @@ lib_docker_daemon() {
 # Functional — Docker Compose version and plugin health
 # ---------------------------------------------------------------------------
 lib_docker_compose_version() {
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_run "lib_docker_compose_version (dry-run: system probe skipped)"
         return 0
     fi
 
     log_info "Checking Docker Compose version"
 
-    if docker compose version &>/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
         local ver; ver="$(docker compose version 2>/dev/null)"
         log_ok "Docker Compose: ${ver}"
-    elif command -v docker-compose &>/dev/null; then
+    elif command -v docker-compose >/dev/null 2>&1; then
         local ver; ver="$(docker-compose --version 2>/dev/null)"
         log_ok "Docker Compose v1: ${ver}"
     else
@@ -297,15 +298,15 @@ lib_docker_compose_version() {
 # Functional — Docker and Docker API version
 # ---------------------------------------------------------------------------
 lib_docker_version() {
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_run "docker version check"
         _dry_run "docker info summary"
     else
-        if command -v docker &>/dev/null; then
+        if command -v docker >/dev/null 2>&1; then
             local cli_ver; cli_ver="$(docker version --format '{{.Client.Version}}' 2>/dev/null || true)"
             local api_ver; api_ver="$(docker version --format '{{.Client.APIVersion}}' 2>/dev/null || true)"
 
-            if [[ -n "${cli_ver}" ]]; then
+            if [ -n "${cli_ver}" ]; then
                 log_ok "Docker CLI version: ${cli_ver} (API ${api_ver})"
             else
                 log_warn "Docker CLI found but 'docker version' failed — daemon may be down"
@@ -320,14 +321,14 @@ lib_docker_version() {
 # Functional — Docker Socket Status
 # ---------------------------------------------------------------------------
 lib_docker_socket(){
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_run "Docker socket presence and permissions check"
     else
         log_info "Checking Docker socket"
-        if [[ -S /var/run/docker.sock ]]; then
+        if [ -S /var/run/docker.sock ]; then
             log_ok "Docker socket: /var/run/docker.sock present"
             # Check if current user can access it (without sudo)
-            if [[ -r /var/run/docker.sock && -w /var/run/docker.sock ]]; then
+            if [ -r /var/run/docker.sock ] && [ -w /var/run/docker.sock ]; then
                 log_ok "Docker socket: accessible by current user ($(id -un))"
             else
                 local sock_group; sock_group="$(stat -c '%G' /var/run/docker.sock 2>/dev/null || true)"
@@ -348,20 +349,20 @@ lib_docker_socket(){
 # Only runs when TESTFW_DOCKER_SMOKE=1 is set to avoid unwanted network calls.
 # ---------------------------------------------------------------------------
 lib_docker_smoke_test() {
-    if [[ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_docker_smoke_test (dry-run: system probe skipped)"
         return 0
     fi
 
-    if [[ "${FIOCHECK_DOCKER_SMOKE:-0}" -ne 1 ]]; then
+    if [ "${FIOCHECK_DOCKER_SMOKE:-0}" -ne 1 ]; then
         log_skip "Docker smoke test (set TESTFW_DOCKER_SMOKE=1 to enable)"
         return 0
     fi
 
     log_info "Running Docker hello-world smoke test"
-    if docker run --rm hello-world &>/dev/null 2>&1; then
+    if docker run --rm hello-world >/dev/null 2>&1; then
         log_ok "Docker smoke test: hello-world container ran successfully"
-        docker rmi hello-world &>/dev/null 2>&1 || true
+        docker rmi hello-world >/dev/null 2>&1 || true
     else
         log_fail "Docker smoke test: hello-world container failed"
         return 1

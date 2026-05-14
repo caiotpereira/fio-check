@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # lib/foundries/lib_fiovb.sh
 #     Foundries.io Verified Boot — fiovb host application (optee-fiovb)
@@ -64,7 +64,7 @@
 # Sourced by profiles; never executed directly.
 # =============================================================================
 
-[[ -n "${_LIB_FIOVB_LOADED:-}" ]] && return 0
+[ -n "${_LIB_FIOVB_LOADED:-}" ] && return 0
 _LIB_FIOVB_LOADED=1
 
 # ---------------------------------------------------------------------------
@@ -112,24 +112,25 @@ lib_fiovb_cmd() {
 # lib_fiovb_devices — TEE and RPMB device node checks
 # ---------------------------------------------------------------------------
 lib_fiovb_devices() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_devices (dry-run: device node probes skipped)"
         return 0
     fi
 
     # ── /dev/tee0 — CA access node ───────────────────────────────────────────
     log_info "Checking TEE CA device node: /dev/tee0"
-    if [[ -c /dev/tee0 ]]; then
+    if [ -c /dev/tee0 ]; then
         log_ok "TEE device: /dev/tee0 present"
         # Check group permissions — CA must be in the 'tee' group or run as root
         local tee_group; tee_group="$(stat -c '%G' /dev/tee0 2>/dev/null || true)"
         local tee_perms; tee_perms="$(stat -c '%a' /dev/tee0 2>/dev/null || true)"
         log_info "  /dev/tee0: group=${tee_group} permissions=${tee_perms}"
-        if [[ "${tee_perms}" == "660" || "${tee_perms}" == "666" ]]; then
-            log_ok "  /dev/tee0: accessible (permissions ${tee_perms})"
-        else
-            log_warn "  /dev/tee0: unexpected permissions ${tee_perms} — fiovb may need root"
-        fi
+        case "${tee_perms}" in
+            660|666)
+                log_ok "  /dev/tee0: accessible (permissions ${tee_perms})" ;;
+            *)
+                log_warn "  /dev/tee0: unexpected permissions ${tee_perms} — fiovb may need root" ;;
+        esac
     else
         log_fail "/dev/tee0 not found — OP-TEE driver not loaded or device not present"
         return 1
@@ -137,7 +138,7 @@ lib_fiovb_devices() {
 
     # ── /dev/teepriv0 — tee-supplicant private node ──────────────────────────
     log_info "Checking TEE supplicant device node: /dev/teepriv0"
-    if [[ -c /dev/teepriv0 ]]; then
+    if [ -c /dev/teepriv0 ]; then
         log_ok "TEE device: /dev/teepriv0 present (tee-supplicant can connect)"
     else
         log_warn "/dev/teepriv0 not found — tee-supplicant may not function correctly"
@@ -147,11 +148,11 @@ lib_fiovb_devices() {
     # fiovb accesses RPMB via OP-TEE (not directly from normal world).
     # We check for the RPMB block device as a sanity indicator.
     log_info "Checking RPMB partition"
-    local rpmb_devs=()
-    mapfile -t rpmb_devs < <(find /dev -maxdepth 1 -name 'mmcblk*rpmb' \
-        2>/dev/null | sort)
-    if [[ "${#rpmb_devs[@]}" -gt 0 ]]; then
-        log_ok "RPMB partition(s) found: ${rpmb_devs[*]}"
+    local rpmb_devs
+    rpmb_devs="$(find /dev -maxdepth 1 -name 'mmcblk*rpmb' 2>/dev/null | sort | tr '\n' ' ')"
+    rpmb_devs="${rpmb_devs% }"
+    if [ -n "${rpmb_devs}" ]; then
+        log_ok "RPMB partition(s) found: ${rpmb_devs}"
     else
         log_warn "No RPMB partition found (/dev/mmcblk*rpmb) — eMMC RPMB may not be available"
     fi
@@ -161,14 +162,14 @@ lib_fiovb_devices() {
 # lib_fiovb_supplicant_service — tee-supplicant systemd service check
 # ---------------------------------------------------------------------------
 lib_fiovb_supplicant_service() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_supplicant_service (dry-run: systemctl probe skipped)"
         return 0
     fi
 
     log_info "Checking tee-supplicant service"
 
-    if ! command -v systemctl &>/dev/null; then
+    if ! command -v systemctl >/dev/null 2>&1; then
         log_skip "tee-supplicant service check: systemctl not available"
         return 0
     fi
@@ -177,10 +178,10 @@ lib_fiovb_supplicant_service() {
     unit_line="$(systemctl list-unit-files "tee-supplicant.service" \
         --no-legend 2>/dev/null | head -1)"
 
-    if [[ -z "${unit_line}" ]]; then
+    if [ -z "${unit_line}" ]; then
         log_warn "tee-supplicant.service: not found — tee-supplicant may be started by init script"
         # Fallback: check if the process is running
-        if pgrep -x tee-supplicant &>/dev/null; then
+        if pgrep -x tee-supplicant >/dev/null 2>&1; then
             log_ok "tee-supplicant: process is running (no systemd unit)"
         else
             log_warn "tee-supplicant: not running — OP-TEE TA sessions will fail"
@@ -188,7 +189,7 @@ lib_fiovb_supplicant_service() {
         return 0
     fi
 
-    local enable_state; enable_state="$(awk '{print $2}' <<< "${unit_line}")"
+    local enable_state; enable_state="$(printf '%s\n' "${unit_line}" | awk '{print $2}')"
     local active_state; active_state="$(systemctl is-active tee-supplicant 2>/dev/null || true)"
 
     local msg="tee-supplicant.service: enable=${enable_state} active=${active_state}"
@@ -208,19 +209,19 @@ lib_fiovb_supplicant_service() {
 # Only runs when fiovb binary and /dev/tee0 are both available.
 # ---------------------------------------------------------------------------
 lib_fiovb_runtime_check() {
-    if [[ "${TESTFW_DRY_RUN:-0}" -eq 1 ]]; then
+    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_runtime_check (dry-run: fiovb_printenv skipped)"
         return 0
     fi
 
     log_info "fiovb runtime check: fiovb_printenv upgrade_available"
 
-    if ! command -v fiovb &>/dev/null; then
+    if ! command -v fiovb >/dev/null 2>&1; then
         log_skip "fiovb runtime check: fiovb binary not available"
         return 0
     fi
 
-    if [[ ! -c /dev/tee0 ]]; then
+    if [ ! -c /dev/tee0 ]; then
         log_skip "fiovb runtime check: /dev/tee0 not present"
         return 0
     fi
@@ -228,7 +229,7 @@ lib_fiovb_runtime_check() {
     local result rc=0
     result="$(fiovb fiovb_printenv upgrade_available 2>&1)" || rc=$?
 
-    if [[ "${rc}" -eq 0 ]]; then
+    if [ "${rc}" -eq 0 ]; then
         log_ok "fiovb_printenv upgrade_available: succeeded (${result:-empty})"
     else
         # Distinguish between "variable not set" (expected on fresh device) and

@@ -18,12 +18,12 @@
 #   FIO_TEST_LMP_SECURE=1 ./basename $0 -r /tmp/docker_report.txt load lmp-v97
 # =============================================================================
 
-source "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
-source "${FIO_TEST_LIB}/foundries/lib_compose_apps_early_start.sh"
-source "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
-source "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
-source "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
-source "${FIO_TEST_LIB}/foundries/lib_lmp_device_register.sh"
+. "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
+. "${FIO_TEST_LIB}/foundries/lib_compose_apps_early_start.sh"
+. "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
+. "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
+. "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
+. "${FIO_TEST_LIB}/foundries/lib_lmp_device_register.sh"
 
 # ---------------------------------------------------------------------------
 # Hooks
@@ -35,7 +35,7 @@ testfw_pre_hook() {
     log_info "pre_hook: LmP validation started at $(date '+%Y-%m-%d %H:%M:%S')"
     log_info "pre_hook: kernel $(uname -r) / arch $(uname -m)"
 
-    if [[ "${FIO_TEST_LMP_SECURE:-0}" -eq 1 ]]; then
+    if [ "${FIO_TEST_LMP_SECURE:-0}" -eq 1 ]; then
         log_info "pre_hook: LmP ${_LMP_VERSION} Secure test enabled (FIO_TEST_LMP_SECURE=1)"
     else
         log_info "pre_hook: LmP ${_LMP_VERSION} Secure test disabled (export FIO_TEST_LMP_SECURE=1 to enable)"
@@ -62,7 +62,7 @@ print_section "Verify Composectl"
 lib_composectl_all
 
 print_section "Verify optee-fiovb"
-if [[ "$(uname -m)" == "aarch64" ]]; then
+if [ "$(uname -m)" = "aarch64" ]; then
     lib_fiovb_all
 else
     log_skip "optee-fiovb: skipped — requires aarch64 (detected: $(uname -m))"
