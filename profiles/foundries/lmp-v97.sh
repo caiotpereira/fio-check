@@ -19,7 +19,7 @@
 # =============================================================================
 
 source "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
-source "${FIO_TEST_LIB}/foundries/lib_lib_compose_apps_early_start_all.sh"
+source "${FIO_TEST_LIB}/foundries/lib_compose_apps_early_start.sh"
 source "${FIO_TEST_LIB}/foundries/lib_fioconfig.sh"
 source "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
 source "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
