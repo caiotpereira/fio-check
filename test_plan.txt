@@ -734,8 +734,8 @@ TEST CASE COUNT SUMMARY
                                     ─────
   Total                               144
 
-  Fixed expectations (exit N)         116
-  System-dependent (exit 0|1)          28
+  Fixed expectations (exit N)         118
+  System-dependent (exit 0|1)          26
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUT-OF-SCOPE (not tested here)
