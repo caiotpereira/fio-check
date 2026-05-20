@@ -669,33 +669,33 @@ expect_no_ansi
 # =============================================================================
 section "Missing / invalid arguments"
 
-check "--report with no filename exits 1"
+check "--report with no filename exits non-0"
 run --report
-expect_exit 1
+expect_exit 2
 
-check "--filter with no value exits 1"
+check "--filter with no value exits non-0"
 run --filter
-expect_exit 1
+expect_exit 2
 
-check "--fn with no function name exits 1"
+check "--fn with no function name exits non-0"
 run --fn
-expect_exit 1
+expect_exit 2
 
-check "--profiles-dir with no path exits 1"
+check "--profiles-dir with no path exits non-0"
 run --profiles-dir
-expect_exit 1
+expect_exit 2
 
-check "--lib-dir with no path exits 1"
+check "--lib-dir with no path exits non-0"
 run --lib-dir
-expect_exit 1
+expect_exit 2
 
-check "run-lib with no lib path exits 1"
+check "run-lib with no lib path exits non-0"
 run run-lib
-expect_exit 1
+expect_exit 2
 
-check "load with no profile path exits 1"
+check "load with no profile path exits non-0"
 run load
-expect_exit 1
+expect_exit 2
 
 # =============================================================================
 #  SECTION 13 — Option combinations
