@@ -4,10 +4,10 @@
 #
 # Usage:
 #   cd /path/to/fio-check
-#   ./test_fio_check.sh          # normal run
-#   ./test_fio_check.sh -v       # verbose: show captured output on failure
+#   ./test_fio_check.sh       # normal run
+#   ./test_fio_check.sh -v    # verbose: show captured output on failure
 #
-# Exit: 0 = all passed, 1 = one or more failed
+# Exit: 0 = all tests passed, 1 = one or more failed
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -15,340 +15,773 @@ FIO="${SCRIPT_DIR}/fio-check.sh"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
-# ─── Counters and state ───────────────────────────────────────────────────────
-_P=0; _F=0; _S=0
-_OUT=""; _RC=0; _T=""
+# =============================================================================
+#  Test counters and shared state
+# =============================================================================
+PASS=0
+FAIL=0
+SKIP=0
 
-# ─── Temp workspace ───────────────────────────────────────────────────────────
-_TMP="$(mktemp -d)"
-trap 'rm -rf "${_TMP}"' EXIT INT TERM
+OUTPUT=""        # stdout+stderr captured from the last run() call
+EXIT_CODE=0      # exit code from the last run() call
+CURRENT_TEST=""  # name set by check() for the next assertion
 
-# ─── ANSI check helper ───────────────────────────────────────────────────────
-# cat -v converts ESC to the visible sequence ^[  — grep -F avoids regex issues
-check_no_ansi() {
-    if printf '%s\n' "${_OUT}" | cat -v | grep -qF '^['; then
-        _fail "ANSI escape sequences found in output"
-    else
-        _ok
-    fi
+# =============================================================================
+#  Temp workspace  (auto-cleaned on exit or interrupt)
+# =============================================================================
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "${WORK_DIR}"' EXIT INT TERM
+
+# =============================================================================
+#  Framework helpers
+# =============================================================================
+
+# section <title>
+#   Print a bold section header to group related tests visually.
+section() {
+    printf '\n\033[1m── %s ──\033[0m\n' "$*"
 }
 
-# ─── Mini framework ───────────────────────────────────────────────────────────
-_section() { printf '\n\033[1m── %s ──\033[0m\n' "$*"; }
-t()        { _T="$1"; }
+# check <description>
+#   Name the next assertion.  Call before each expect_* or expect_no_ansi.
+check() {
+    CURRENT_TEST="$1"
+}
 
+# run [args...]
+#   Run fio-check.sh with the given arguments.
+#   Captures combined stdout+stderr into OUTPUT and saves the exit code.
 run() {
     set +e
-    _OUT=$("${FIO}" "$@" 2>&1)
-    _RC=$?
+    OUTPUT=$("${FIO}" "$@" 2>&1)
+    EXIT_CODE=$?
     set -e
 }
 
-_ok()   { _P=$((_P+1)); printf '  \033[32m✓\033[0m %s\n' "${_T}"; }
-_fail() {
-    _F=$((_F+1))
-    printf '  \033[31m✗\033[0m %s\n    └─ %s\n' "${_T}" "$1"
+# pass / fail <reason>
+#   Record a test result.  Called internally by the expect_* helpers.
+pass() {
+    PASS=$((PASS + 1))
+    printf '  \033[32m✓\033[0m %s\n' "${CURRENT_TEST}"
+}
+
+fail() {
+    FAIL=$((FAIL + 1))
+    printf '  \033[31m✗\033[0m %s\n    └─ %s\n' "${CURRENT_TEST}" "$1"
     if [ "${VERBOSE}" -eq 1 ]; then
-        printf '%s\n' "${_OUT}" | head -15 | sed 's/^/      /'
+        printf '%s\n' "${OUTPUT}" | head -15 | sed 's/^/      /'
     fi
 }
-_skip() { _S=$((_S+1)); printf '  \033[33m~\033[0m %s  [%s]\n' "${_T}" "$1"; }
 
-expect_exit()    {
-    [ "${_RC}" -eq "$1" ] && _ok || _fail "exit $1 expected, got ${_RC}"
+skip() {
+    SKIP=$((SKIP + 1))
+    printf '  \033[33m~\033[0m %s  [%s]\n' "${CURRENT_TEST}" "$1"
 }
-expect_exit_any() {
-    # Pass if exit code matches any of the given values (for system-dependent tests)
-    local _found=0
-    for _e in "$@"; do [ "${_RC}" -eq "${_e}" ] && _found=1 && break; done
-    [ "${_found}" -eq 1 ] && _ok || _fail "exit in ($*) expected, got ${_RC}"
-}
-expect_contains() {
-    printf '%s\n' "${_OUT}" | grep -q "$1" \
-        && _ok \
-        || _fail "output missing: $1"
-}
-expect_absent() {
-    if printf '%s\n' "${_OUT}" | grep -q "$1"; then
-        _fail "output should NOT contain: $1"
+
+# =============================================================================
+#  Assertion helpers
+# =============================================================================
+
+# expect_exit <code>
+#   Assert the last run() exited with exactly <code>.
+expect_exit() {
+    if [ "${EXIT_CODE}" -eq "$1" ]; then
+        pass
     else
-        _ok
+        fail "expected exit $1, got ${EXIT_CODE}"
     fi
 }
-expect_file()     { [ -f "$1" ] && _ok || _fail "file missing: $1"; }
-expect_file_has() { [ -f "$1" ] && grep -q "$2" "$1" && _ok || _fail "file '$1' missing: $2"; }
 
-# ─── Sanity check ─────────────────────────────────────────────────────────────
-_section "Preconditions"
+# expect_exit_any <code> [code ...]
+#   Assert the last run() exited with one of the given codes.
+#   Used for tests whose result depends on what is installed on the host.
+expect_exit_any() {
+    local matched=0
+    for code in "$@"; do
+        [ "${EXIT_CODE}" -eq "${code}" ] && matched=1 && break
+    done
+    if [ "${matched}" -eq 1 ]; then
+        pass
+    else
+        fail "expected exit code in ($*), got ${EXIT_CODE}"
+    fi
+}
 
-t "fio-check.sh exists";     [ -f "${FIO}" ]     && _ok || _fail "not found: ${FIO}"
-t "fio-check.sh executable"; [ -x "${FIO}" ]     && _ok || _fail "not executable: ${FIO}"
+# expect_output_has <pattern>
+#   Assert the captured output matches <pattern> (basic regex via grep).
+expect_output_has() {
+    if printf '%s\n' "${OUTPUT}" | grep -q "$1"; then
+        pass
+    else
+        fail "output does not contain: $1"
+    fi
+}
 
-# ─── Help / Usage ─────────────────────────────────────────────────────────────
-_section "Help / Usage"
+# expect_output_not_has <pattern>
+#   Assert the captured output does NOT match <pattern>.
+expect_output_not_has() {
+    if printf '%s\n' "${OUTPUT}" | grep -q "$1"; then
+        fail "output should not contain: $1"
+    else
+        pass
+    fi
+}
 
-t "help command exits 0";            run help;         expect_exit 0
-t "help command shows USAGE";                          expect_contains "USAGE"
-t "help command shows COMMANDS";                       expect_contains "COMMANDS"
-t "help command shows OPTIONS";                        expect_contains "OPTIONS"
+# expect_file_exists <path>
+#   Assert that a file exists at <path>.
+expect_file_exists() {
+    if [ -f "$1" ]; then
+        pass
+    else
+        fail "file not found: $1"
+    fi
+}
 
-t "--help flag exits 0";             run --help;       expect_exit 0
-t "--help shows tool name";                            expect_contains "fio-check"
+# expect_file_has <path> <pattern>
+#   Assert that a file exists and its content matches <pattern>.
+expect_file_has() {
+    if [ -f "$1" ] && grep -q "$2" "$1"; then
+        pass
+    else
+        fail "file '$1' does not contain: $2"
+    fi
+}
 
-t "-h flag exits 0";                 run -h;           expect_exit 0
+# expect_no_ansi
+#   Assert the captured output contains no ANSI escape sequences.
+#   cat -v makes the ESC byte visible as ^[ so grep -F can find it reliably.
+expect_no_ansi() {
+    if printf '%s\n' "${OUTPUT}" | cat -v | grep -qF '^['; then
+        fail "ANSI escape sequences found in output"
+    else
+        pass
+    fi
+}
 
-t "no args shows usage, exits 0";   run;              expect_exit 0
-t "no args shows USAGE";                               expect_contains "USAGE"
+# =============================================================================
+#  SECTION 1 — Preconditions
+# =============================================================================
+section "Preconditions"
 
-t "unknown command exits 1";        run bad-command;  expect_exit 1
-t "unknown command shows error";                       expect_contains "Unknown"
+check "fio-check.sh exists"
+[ -f "${FIO}" ] && pass || fail "not found: ${FIO}"
 
-t "unknown option exits 1";         run --bad-flag;   expect_exit 1
+check "fio-check.sh is executable"
+[ -x "${FIO}" ] && pass || fail "not executable: ${FIO}"
 
-# ─── list-libs ────────────────────────────────────────────────────────────────
-_section "list-libs"
+# =============================================================================
+#  SECTION 2 — Help / Usage
+# =============================================================================
+section "Help / Usage"
 
-t "list-libs exits 0";                  run list-libs;                        expect_exit 0
-t "list-libs shows a lib file";                                               expect_contains "lib_docker"
-t "list-libs shows foundries group";                                          expect_contains "foundries"
+check "help command exits 0"
+run help
+expect_exit 0
 
-t "list-libs --verbose exits 0";        run --verbose list-libs;              expect_exit 0
+check "help command shows USAGE section"
+expect_output_has "USAGE"
 
-t "list-libs --quiet exits 0";          run --quiet list-libs;                expect_exit 0
+check "help command shows COMMANDS section"
+expect_output_has "COMMANDS"
 
-t "list-libs --no-color exits 0";       run --no-color list-libs;             expect_exit 0
-t "list-libs --no-color has no ANSI";                                         check_no_ansi
+check "help command shows OPTIONS section"
+expect_output_has "OPTIONS"
 
-t "list-libs --lib-dir valid exits 0";  run --lib-dir "${SCRIPT_DIR}/lib" list-libs;  expect_exit 0
-t "list-libs --lib-dir valid shows lib";                                      expect_contains "lib_docker"
+check "--help flag exits 0"
+run --help
+expect_exit 0
 
-t "list-libs --lib-dir empty warns";    run --lib-dir "${_TMP}" list-libs;    expect_exit 0
-t "list-libs --lib-dir empty output";                                         expect_contains "No lib modules\|not found"
+check "--help flag shows tool name"
+expect_output_has "fio-check"
 
-t "list-libs --lib-dir missing warns";  run --lib-dir "/no_such_dir_xyz" list-libs; expect_exit 0
+check "-h short flag exits 0"
+run -h
+expect_exit 0
 
-# ─── list-profiles ────────────────────────────────────────────────────────────
-_section "list-profiles"
+check "no arguments shows usage and exits 0"
+run
+expect_exit 0
 
-t "list-profiles exits 0";                    run list-profiles;                              expect_exit 0
-t "list-profiles shows profile";                                                              expect_contains "docker\|foundries"
+check "no arguments output contains USAGE"
+expect_output_has "USAGE"
 
-t "list-profiles --profiles-dir valid";       run --profiles-dir "${SCRIPT_DIR}/profiles" list-profiles; expect_exit 0
-t "list-profiles --profiles-dir valid shows";                                                 expect_contains "docker"
+check "unknown command exits 1"
+run bad-command
+expect_exit 1
 
-t "list-profiles --profiles-dir empty warns"; run --profiles-dir "${_TMP}" list-profiles;    expect_exit 0
-t "list-profiles --profiles-dir empty msg";                                                   expect_contains "No profiles\|not found"
+check "unknown command shows error message"
+expect_output_has "Unknown"
 
-t "list-profiles --no-color no ANSI";         run --no-color list-profiles;                  expect_exit 0
-t "list-profiles --no-color output";                                                          check_no_ansi
+check "unknown option exits 1"
+run --bad-flag
+expect_exit 1
 
-# ─── check-cmd ────────────────────────────────────────────────────────────────
-_section "check-cmd"
+# =============================================================================
+#  SECTION 3 — list-libs
+# =============================================================================
+section "list-libs"
 
-t "check-cmd sh exits 0";               run check-cmd sh;                        expect_exit 0
-t "check-cmd sh shows OK";                                                       expect_contains "OK"
+check "list-libs exits 0"
+run list-libs
+expect_exit 0
 
-t "check-cmd multiple exists exits 0";  run check-cmd sh ls cat;                 expect_exit 0
+check "list-libs output shows lib_docker"
+expect_output_has "lib_docker"
 
-t "check-cmd missing exits 1";          run check-cmd __nonexistent_xyz_404__;   expect_exit 1
-t "check-cmd missing shows FAIL";                                                expect_contains "FAIL\|missing"
+check "list-libs output shows foundries group"
+expect_output_has "foundries"
 
-t "check-cmd one missing exits 1";      run check-cmd sh __nonexistent_xyz_404__; expect_exit 1
+# --verbose: list-libs does not call check_* functions so no VERB lines
+# are expected, but the flag must not cause a crash
+check "list-libs --verbose exits 0"
+run --verbose list-libs
+expect_exit 0
 
-t "--dry-run check-cmd exits 0";        run --dry-run check-cmd sh;              expect_exit 0
-t "--dry-run check-cmd shows DRY";                                               expect_contains "DRY"
-t "--dry-run check-cmd no actual exec";                                          expect_absent "\[ OK \]"
+check "list-libs --quiet exits 0"
+run --quiet list-libs
+expect_exit 0
 
-t "--verbose check-cmd exits 0";        run --verbose check-cmd sh;              expect_exit 0
-t "--verbose check-cmd shows VERB";                                              expect_contains "VERB"
+check "list-libs --no-color exits 0"
+run --no-color list-libs
+expect_exit 0
 
-t "--quiet check-cmd sh exits 0";       run --quiet check-cmd sh;               expect_exit 0
-t "--quiet check-cmd no OK output";                                              expect_absent "\[ OK \]"
+check "list-libs --no-color produces no ANSI escape sequences"
+expect_no_ansi
 
-t "--no-color check-cmd exits 0";       run --no-color check-cmd sh;            expect_exit 0
-t "--no-color check-cmd no ANSI";                                                check_no_ansi
-t "--no-color check-cmd has OK text";                                            expect_contains "OK"
+check "list-libs --lib-dir <valid path> exits 0"
+run --lib-dir "${SCRIPT_DIR}/lib" list-libs
+expect_exit 0
 
-t "--filter ok check-cmd sh";           run --filter ok check-cmd sh;           expect_exit 0
-t "--filter ok shows OK result";                                                 expect_contains "OK"
+check "list-libs --lib-dir <valid path> shows lib_docker"
+expect_output_has "lib_docker"
 
-t "--filter fail check-cmd sh";         run --filter fail check-cmd sh;         expect_exit 0
-t "--filter fail hides OK";                                                      expect_absent "\[ OK \]"
+check "list-libs --lib-dir <empty dir> exits 0 with warning"
+run --lib-dir "${WORK_DIR}" list-libs
+expect_exit 0
 
-t "--filter fail check-cmd missing";    run --filter fail check-cmd __nonexistent_xyz_404__; expect_exit 1
-t "--filter fail shows FAIL";                                                    expect_contains "FAIL\|missing"
+check "list-libs --lib-dir <empty dir> output mentions no modules found"
+expect_output_has "No lib modules\|not found"
 
-t "--filter warn check-cmd sh";         run --filter warn check-cmd sh;         expect_exit 0
+check "list-libs --lib-dir <nonexistent path> exits 0"
+run --lib-dir "/no_such_dir_xyz" list-libs
+expect_exit 0
 
-# ─── check-kconfig ────────────────────────────────────────────────────────────
-_section "check-kconfig"
+# =============================================================================
+#  SECTION 4 — list-profiles
+# =============================================================================
+section "list-profiles"
 
-t "--dry-run check-kconfig exits 0";    run --dry-run check-kconfig CONFIG_NET; expect_exit 0
-t "--dry-run check-kconfig shows DRY";                                          expect_contains "DRY"
+check "list-profiles exits 0"
+run list-profiles
+expect_exit 0
 
-t "--dry-run kconfig strips CONFIG_";   run --dry-run check-kconfig CONFIG_INET; expect_exit 0
-t "bare symbol stripped (no CONFIG_)";  run --dry-run check-kconfig INET;       expect_exit 0
-t "bare symbol DRY output";                                                      expect_contains "DRY"
+check "list-profiles output shows at least one profile"
+expect_output_has "docker\|foundries"
 
-t "check-kconfig live exits 0 or 1";   run check-kconfig CONFIG_NET;           expect_exit_any 0 1
-t "check-kconfig live has result";                                              expect_contains "kconfig:\|no kernel config"
+check "list-profiles --profiles-dir <valid path> exits 0"
+run --profiles-dir "${SCRIPT_DIR}/profiles" list-profiles
+expect_exit 0
 
-t "check-kconfig with expected value"; run --dry-run check-kconfig CONFIG_NET y; expect_exit 0
-t "check-kconfig with expected DRY";                                            expect_contains "DRY"
+check "list-profiles --profiles-dir <valid path> shows docker profile"
+expect_output_has "docker"
 
-# ─── check-deps ───────────────────────────────────────────────────────────────
-_section "check-deps"
+check "list-profiles --profiles-dir <empty dir> exits 0 with warning"
+run --profiles-dir "${WORK_DIR}" list-profiles
+expect_exit 0
 
-t "--dry-run check-deps exits 0";       run --dry-run check-deps ssl;           expect_exit 0
-t "--dry-run check-deps shows DRY";                                             expect_contains "DRY"
+check "list-profiles --profiles-dir <empty dir> output mentions no profiles found"
+expect_output_has "No profiles\|not found"
 
-t "check-deps nonexistent exits 1";     run check-deps __no_such_lib_xyz_404__; expect_exit 1
-t "check-deps nonexistent shows FAIL";                                          expect_contains "NOT FOUND\|FAIL"
+check "list-profiles --no-color exits 0"
+run --no-color list-profiles
+expect_exit 0
 
-t "check-deps multiple --dry-run";      run --dry-run check-deps ssl crypto;    expect_exit 0
+check "list-profiles --no-color produces no ANSI escape sequences"
+expect_no_ansi
 
-# ─── run-lib ──────────────────────────────────────────────────────────────────
-_section "run-lib"
+# =============================================================================
+#  SECTION 5 — check-cmd
+# =============================================================================
+section "check-cmd"
 
-# lib_aktualizr_all does not exist in the lib, so run_lib warns but exits 0
-t "run-lib exits 0 (no _all fn)";      run run-lib foundries/lib_aktualizr.sh; expect_exit 0
-t "run-lib warns missing _all fn";                                              expect_contains "not found\|WARN"
-t "run-lib shows Results section";                                              expect_contains "Results"
+# Basic pass / fail
+check "check-cmd sh exits 0 (sh is always present)"
+run check-cmd sh
+expect_exit 0
 
-t "run-lib nonexistent exits 1";        run run-lib __no_such_lib__.sh;         expect_exit 1
-t "run-lib nonexistent shows error";                                            expect_contains "not found\|Lib not found"
+check "check-cmd sh output shows OK"
+expect_output_has "OK"
 
-t "--dry-run run-lib exits 0";          run --dry-run run-lib foundries/lib_fioconfig.sh; expect_exit 0
-t "--dry-run run-lib shows DRY";                                                expect_contains "DRY\|dry"
+check "check-cmd sh ls cat exits 0 (all present)"
+run check-cmd sh ls cat
+expect_exit 0
 
-t "--fn with valid function exits 0";   run --fn lib_aktualizr_set_version run-lib foundries/lib_aktualizr.sh; expect_exit 0
-t "--fn shows Results section";                                                 expect_contains "Results"
+check "check-cmd <nonexistent> exits 1"
+run check-cmd __nonexistent_xyz_404__
+expect_exit 1
 
-t "--dry-run --fn lib_aktualizr_cmd";   run --dry-run --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh; expect_exit 0
-t "--dry-run --fn shows DRY";                                                   expect_contains "DRY"
+check "check-cmd <nonexistent> output shows FAIL or missing"
+expect_output_has "FAIL\|missing"
 
-t "--verbose run-lib shows VERB";       run --verbose --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh; expect_exit_any 0 1
-t "--verbose run-lib VERB present";                                             expect_contains "VERB"
+check "check-cmd sh <nonexistent> exits 1 when any command is missing"
+run check-cmd sh __nonexistent_xyz_404__
+expect_exit 1
 
-t "--filter fail --dry-run run-lib";    run --filter fail --dry-run run-lib foundries/lib_fioconfig.sh; expect_exit 0
-t "--filter fail hides non-fail";                                               expect_absent "\[ OK \]"
+# --dry-run
+check "--dry-run check-cmd exits 0"
+run --dry-run check-cmd sh
+expect_exit 0
 
-t "--no-color run-lib no ANSI";         run --no-color --dry-run run-lib foundries/lib_fioconfig.sh; expect_exit 0
-t "--no-color run-lib output clean";                                            check_no_ansi
+check "--dry-run check-cmd output shows DRY marker"
+expect_output_has "DRY"
 
-t "run-lib --lib-dir override";         run --lib-dir "${SCRIPT_DIR}/lib" --dry-run run-lib foundries/lib_fioconfig.sh; expect_exit 0
+check "--dry-run check-cmd does not log an OK result"
+expect_output_not_has "\[ OK \]"
 
-t "-r report: run-lib creates file";    run -r "${_TMP}/rl_report.txt" --dry-run --fn lib_aktualizr_set_version run-lib foundries/lib_aktualizr.sh
-t "-r report: file exists";             expect_file "${_TMP}/rl_report.txt"
-t "-r report: has header";              expect_file_has "${_TMP}/rl_report.txt" "Foundries Check Report"
-t "-r report: has PASS line";           expect_file_has "${_TMP}/rl_report.txt" "PASS:"
+# --verbose
+check "--verbose check-cmd exits 0"
+run --verbose check-cmd sh
+expect_exit 0
 
-# ─── run-all-libs ─────────────────────────────────────────────────────────────
-_section "run-all-libs"
+check "--verbose check-cmd output shows VERB lines"
+expect_output_has "VERB"
 
-t "--dry-run run-all-libs exits 0/1";   run --dry-run run-all-libs;             expect_exit_any 0 1
-t "--dry-run run-all-libs shows summary";                                       expect_contains "Run All Libs"
-t "--dry-run run-all-libs shows modules";                                       expect_contains "module"
+# --quiet
+check "--quiet check-cmd exits 0"
+run --quiet check-cmd sh
+expect_exit 0
 
-t "--quiet --dry-run run-all-libs";     run --quiet --dry-run run-all-libs;     expect_exit_any 0 1
+check "--quiet check-cmd suppresses OK output"
+expect_output_not_has "\[ OK \]"
 
-t "--filter fail --dry-run run-all-libs"; run --filter fail --dry-run run-all-libs; expect_exit_any 0 1
+# --no-color
+check "--no-color check-cmd exits 0"
+run --no-color check-cmd sh
+expect_exit 0
 
-t "--no-color run-all-libs no ANSI";    run --no-color --dry-run run-all-libs;  expect_exit_any 0 1
-t "--no-color run-all-libs output";                                             check_no_ansi
+check "--no-color check-cmd produces no ANSI escape sequences"
+expect_no_ansi
 
-t "-r run-all-libs exit 0 or 1";
-_rl_rep="${_TMP}/all_libs_report.txt"
-run -r "${_rl_rep}" --dry-run --fn lib_aktualizr_set_version run-all-libs
+check "--no-color check-cmd still shows OK as plain text"
+expect_output_has "OK"
+
+# --filter
+check "--filter ok check-cmd sh exits 0"
+run --filter ok check-cmd sh
+expect_exit 0
+
+check "--filter ok check-cmd sh shows OK result"
+expect_output_has "OK"
+
+check "--filter fail check-cmd sh exits 0"
+run --filter fail check-cmd sh
+expect_exit 0
+
+check "--filter fail check-cmd sh hides OK result"
+expect_output_not_has "\[ OK \]"
+
+check "--filter fail check-cmd <nonexistent> exits 1"
+run --filter fail check-cmd __nonexistent_xyz_404__
+expect_exit 1
+
+check "--filter fail check-cmd <nonexistent> shows FAIL"
+expect_output_has "FAIL\|missing"
+
+check "--filter warn check-cmd sh exits 0"
+run --filter warn check-cmd sh
+expect_exit 0
+
+# =============================================================================
+#  SECTION 6 — check-kconfig
+# =============================================================================
+section "check-kconfig"
+
+check "--dry-run check-kconfig CONFIG_NET exits 0"
+run --dry-run check-kconfig CONFIG_NET
+expect_exit 0
+
+check "--dry-run check-kconfig CONFIG_NET output shows DRY"
+expect_output_has "DRY"
+
+check "--dry-run check-kconfig CONFIG_INET exits 0"
+run --dry-run check-kconfig CONFIG_INET
+expect_exit 0
+
+# CONFIG_ prefix stripping: bare symbol should behave identically
+check "bare symbol INET (no CONFIG_ prefix) exits 0"
+run --dry-run check-kconfig INET
+expect_exit 0
+
+check "bare symbol INET output shows DRY (prefix was stripped correctly)"
+expect_output_has "DRY"
+
+# Live check — result depends on whether a kernel config is accessible
+check "live check-kconfig exits 0 or 1 (system-dependent)"
+run check-kconfig CONFIG_NET
 expect_exit_any 0 1
 
-# ─── run-all ──────────────────────────────────────────────────────────────────
-_section "run-all"
+check "live check-kconfig output shows a recognisable result"
+expect_output_has "kconfig:\|no kernel config"
 
-t "--dry-run run-all exits 0/1";        run --dry-run run-all;                  expect_exit_any 0 1
-t "--dry-run run-all shows summary";                                            expect_contains "Run All"
-t "--dry-run run-all shows profile(s)";                                         expect_contains "profile"
+check "--dry-run check-kconfig with explicit expected value exits 0"
+run --dry-run check-kconfig CONFIG_NET y
+expect_exit 0
 
-t "--quiet --dry-run run-all";          run --quiet --dry-run run-all;          expect_exit_any 0 1
+check "--dry-run check-kconfig with explicit expected value shows DRY"
+expect_output_has "DRY"
 
-t "--filter fail --dry-run run-all";    run --filter fail --dry-run run-all;    expect_exit_any 0 1
+# =============================================================================
+#  SECTION 7 — check-deps
+# =============================================================================
+section "check-deps"
 
-t "--no-color run-all no ANSI";         run --no-color --dry-run run-all;       expect_exit_any 0 1
-t "--no-color run-all output";                                                  check_no_ansi
+check "--dry-run check-deps ssl exits 0"
+run --dry-run check-deps ssl
+expect_exit 0
 
-t "--profiles-dir run-all override";    run --profiles-dir "${SCRIPT_DIR}/profiles" --dry-run run-all; expect_exit_any 0 1
+check "--dry-run check-deps ssl output shows DRY"
+expect_output_has "DRY"
 
-# ─── load ─────────────────────────────────────────────────────────────────────
-_section "load"
+check "check-deps <nonexistent lib> exits 1"
+run check-deps __no_such_lib_xyz_404__
+expect_exit 1
 
-t "--dry-run load by path exits 0";     run --dry-run load docker/docker.sh;   expect_exit_any 0 1
-t "--dry-run load shows profile name";                                          expect_contains "docker\|Profile\|Loading"
+check "check-deps <nonexistent lib> output shows NOT FOUND or FAIL"
+expect_output_has "NOT FOUND\|FAIL"
 
-t "--dry-run load by folder name";      run --dry-run load docker;              expect_exit_any 0 1
+check "--dry-run check-deps with multiple libraries exits 0"
+run --dry-run check-deps ssl crypto
+expect_exit 0
 
-t "load nonexistent profile exits 1";   run load __no_such_profile_xyz__;       expect_exit 1
-t "load nonexistent shows error";                                               expect_contains "not found\|Profile not found"
+# =============================================================================
+#  SECTION 8 — run-lib
+# =============================================================================
+section "run-lib"
 
-t "-r load creates report file";        run -r "${_TMP}/load_report.txt" --dry-run load docker/docker.sh
-t "-r load file exists";                expect_file "${_TMP}/load_report.txt"
-t "-r load report has header";          expect_file_has "${_TMP}/load_report.txt" "Foundries Check Report"
-t "-r load report has PASS line";       expect_file_has "${_TMP}/load_report.txt" "PASS:"
+# lib_aktualizr.sh has no lib_aktualizr_all function, so run_lib logs a
+# warning but exits 0 because no check recorded a FAIL
+check "run-lib foundries/lib_aktualizr.sh exits 0 (no _all function defined)"
+run run-lib foundries/lib_aktualizr.sh
+expect_exit 0
 
-t "--filter fail load --dry-run";       run --filter fail --dry-run load docker/docker.sh; expect_exit_any 0 1
+check "run-lib output warns about missing _all function"
+expect_output_has "not found\|WARN"
 
-t "--no-color load no ANSI";            run --no-color --dry-run load docker/docker.sh; expect_exit_any 0 1
-t "--no-color load output";                                                     check_no_ansi
+check "run-lib output shows Results section"
+expect_output_has "Results"
 
-# ─── Missing / invalid arguments ─────────────────────────────────────────────
-_section "Missing / invalid arguments"
+check "run-lib <nonexistent file> exits 1"
+run run-lib __no_such_lib__.sh
+expect_exit 1
 
-t "--report missing value exits non-0"; run --report;                          expect_exit 1
-t "--filter missing value exits non-0"; run --filter;                          expect_exit 1
-t "--fn missing value exits non-0";     run --fn;                              expect_exit 1
-t "--profiles-dir missing exits non-0"; run --profiles-dir;                   expect_exit 1
-t "--lib-dir missing exits non-0";      run --lib-dir;                         expect_exit 1
-t "run-lib missing lib exits non-0";    run run-lib;                           expect_exit 1
-t "load missing profile exits non-0";   run load;                              expect_exit 1
+check "run-lib <nonexistent file> output shows error message"
+expect_output_has "not found\|Lib not found"
 
-# ─── Option combinations ──────────────────────────────────────────────────────
-_section "Option combinations"
+check "--dry-run run-lib exits 0"
+run --dry-run run-lib foundries/lib_fioconfig.sh
+expect_exit 0
 
-t "--no-color --verbose check-cmd sh";  run --no-color --verbose check-cmd sh; expect_exit 0
-t "combined: no ANSI codes";                                                    check_no_ansi
-t "combined: has VERB";                                                         expect_contains "VERB"
+check "--dry-run run-lib output shows DRY"
+expect_output_has "DRY\|dry"
 
-t "--quiet --filter fail missing cmd";  run --quiet --filter fail check-cmd __nonexistent_xyz_404__; expect_exit 1
+# --fn: call a specific function instead of the derived _all name
+check "--fn lib_aktualizr_set_version run-lib exits 0"
+run --fn lib_aktualizr_set_version run-lib foundries/lib_aktualizr.sh
+expect_exit 0
 
-t "--dry-run --verbose check-kconfig";  run --dry-run --verbose check-kconfig CONFIG_NET; expect_exit 0
-t "combined: has DRY";                                                          expect_contains "DRY"
+check "--fn run-lib output shows Results section"
+expect_output_has "Results"
 
-t "--dry-run --no-color list-libs";     run --dry-run --no-color list-libs;    expect_exit 0
-t "combined: no ANSI";                                                          check_no_ansi
+check "--dry-run --fn lib_aktualizr_cmd run-lib exits 0"
+run --dry-run --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh
+expect_exit 0
 
-t "--filter fail,warn check-cmd sh";    run --filter "fail,warn" check-cmd sh; expect_exit 0
-t "--filter fail,warn hides OK";                                                expect_absent "\[ OK \]"
+check "--dry-run --fn lib_aktualizr_cmd output shows DRY"
+expect_output_has "DRY"
 
-t "--filter fail,ok check-cmd sh";      run --filter "fail,ok" check-cmd sh;   expect_exit 0
-t "--filter fail,ok shows OK";                                                  expect_contains "OK"
+# check_cmd() calls print_verbose before the existence test, so VERB appears
+# even when aktualizr-lite is not installed on the host
+check "--verbose --fn lib_aktualizr_cmd run-lib exits 0 or 1 (system-dependent)"
+run --verbose --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh
+expect_exit_any 0 1
 
-t "-v short for --verbose";             run -v check-cmd sh;                   expect_exit 0
-t "-v shows VERB output";                                                       expect_contains "VERB"
+check "--verbose --fn lib_aktualizr_cmd output shows VERB lines"
+expect_output_has "VERB"
 
-t "-q short for --quiet";              run -q check-cmd sh;                    expect_exit 0
-t "-q suppresses OK";                                                           expect_absent "\[ OK \]"
+check "--filter fail --dry-run run-lib exits 0"
+run --filter fail --dry-run run-lib foundries/lib_fioconfig.sh
+expect_exit 0
 
-t "-r short for --report";             run -r "${_TMP}/short_r.txt" --dry-run run-lib foundries/lib_fioconfig.sh; expect_exit 0
-t "-r created report file";            expect_file "${_TMP}/short_r.txt"
+check "--filter fail --dry-run run-lib hides OK results"
+expect_output_not_has "\[ OK \]"
 
-# ─── Summary ──────────────────────────────────────────────────────────────────
+check "--no-color --dry-run run-lib exits 0"
+run --no-color --dry-run run-lib foundries/lib_fioconfig.sh
+expect_exit 0
+
+check "--no-color --dry-run run-lib produces no ANSI escape sequences"
+expect_no_ansi
+
+check "--lib-dir override --dry-run run-lib exits 0"
+run --lib-dir "${SCRIPT_DIR}/lib" --dry-run run-lib foundries/lib_fioconfig.sh
+expect_exit 0
+
+# Report file generation
+run -r "${WORK_DIR}/run_lib_report.txt" \
+    --dry-run \
+    --fn lib_aktualizr_set_version \
+    run-lib foundries/lib_aktualizr.sh
+
+check "-r creates a report file after run-lib"
+expect_file_exists "${WORK_DIR}/run_lib_report.txt"
+
+check "-r report file contains the Foundries header"
+expect_file_has "${WORK_DIR}/run_lib_report.txt" "Foundries Check Report"
+
+check "-r report file contains PASS summary line"
+expect_file_has "${WORK_DIR}/run_lib_report.txt" "PASS:"
+
+# =============================================================================
+#  SECTION 9 — run-all-libs
+#  NOTE: exit code is 0|1 throughout this section because Bug B2 means
+#  lib_docker_cgroup_mount runs even under --dry-run and fails on hosts
+#  without a cgroup filesystem (e.g. macOS).  See review.txt item B2.
+# =============================================================================
+section "run-all-libs"
+
+check "--dry-run run-all-libs does not crash (exit 0 or 1, see Bug B2)"
+run --dry-run run-all-libs
+expect_exit_any 0 1
+
+check "--dry-run run-all-libs output shows summary header"
+expect_output_has "Run All Libs"
+
+check "--dry-run run-all-libs output shows module count"
+expect_output_has "module"
+
+check "--quiet --dry-run run-all-libs does not crash"
+run --quiet --dry-run run-all-libs
+expect_exit_any 0 1
+
+check "--filter fail --dry-run run-all-libs does not crash"
+run --filter fail --dry-run run-all-libs
+expect_exit_any 0 1
+
+check "--no-color --dry-run run-all-libs does not crash"
+run --no-color --dry-run run-all-libs
+expect_exit_any 0 1
+
+check "--no-color --dry-run run-all-libs produces no ANSI escape sequences"
+expect_no_ansi
+
+check "-r --dry-run run-all-libs does not crash"
+run -r "${WORK_DIR}/all_libs_report.txt" \
+    --dry-run \
+    --fn lib_aktualizr_set_version \
+    run-all-libs
+expect_exit_any 0 1
+
+# =============================================================================
+#  SECTION 10 — run-all
+#  NOTE: same Bug B2 caveat as run-all-libs above.
+# =============================================================================
+section "run-all"
+
+check "--dry-run run-all does not crash (exit 0 or 1, see Bug B2)"
+run --dry-run run-all
+expect_exit_any 0 1
+
+check "--dry-run run-all output shows summary header"
+expect_output_has "Run All"
+
+check "--dry-run run-all output shows profile count"
+expect_output_has "profile"
+
+check "--quiet --dry-run run-all does not crash"
+run --quiet --dry-run run-all
+expect_exit_any 0 1
+
+check "--filter fail --dry-run run-all does not crash"
+run --filter fail --dry-run run-all
+expect_exit_any 0 1
+
+check "--no-color --dry-run run-all does not crash"
+run --no-color --dry-run run-all
+expect_exit_any 0 1
+
+check "--no-color --dry-run run-all produces no ANSI escape sequences"
+expect_no_ansi
+
+check "--profiles-dir override --dry-run run-all does not crash"
+run --profiles-dir "${SCRIPT_DIR}/profiles" --dry-run run-all
+expect_exit_any 0 1
+
+# =============================================================================
+#  SECTION 11 — load
+#  NOTE: same Bug B2 caveat for all --dry-run load tests.
+# =============================================================================
+section "load"
+
+check "--dry-run load docker/docker.sh does not crash (exit 0 or 1, see Bug B2)"
+run --dry-run load docker/docker.sh
+expect_exit_any 0 1
+
+check "--dry-run load output identifies the profile"
+expect_output_has "docker\|Profile\|Loading"
+
+# Folder-name resolution: finds the first .sh inside profiles/docker/
+check "--dry-run load docker (folder name) does not crash"
+run --dry-run load docker
+expect_exit_any 0 1
+
+check "load <nonexistent profile> exits 1"
+run load __no_such_profile_xyz__
+expect_exit 1
+
+check "load <nonexistent profile> output shows error message"
+expect_output_has "not found\|Profile not found"
+
+# Report file generation via load
+run -r "${WORK_DIR}/load_report.txt" --dry-run load docker/docker.sh
+
+check "-r creates a report file after load"
+expect_file_exists "${WORK_DIR}/load_report.txt"
+
+check "-r load report file contains the Foundries header"
+expect_file_has "${WORK_DIR}/load_report.txt" "Foundries Check Report"
+
+check "-r load report file contains PASS summary line"
+expect_file_has "${WORK_DIR}/load_report.txt" "PASS:"
+
+check "--filter fail --dry-run load does not crash"
+run --filter fail --dry-run load docker/docker.sh
+expect_exit_any 0 1
+
+check "--no-color --dry-run load does not crash"
+run --no-color --dry-run load docker/docker.sh
+expect_exit_any 0 1
+
+check "--no-color --dry-run load produces no ANSI escape sequences"
+expect_no_ansi
+
+# =============================================================================
+#  SECTION 12 — Missing / invalid arguments
+# =============================================================================
+section "Missing / invalid arguments"
+
+check "--report with no filename exits 1"
+run --report
+expect_exit 1
+
+check "--filter with no value exits 1"
+run --filter
+expect_exit 1
+
+check "--fn with no function name exits 1"
+run --fn
+expect_exit 1
+
+check "--profiles-dir with no path exits 1"
+run --profiles-dir
+expect_exit 1
+
+check "--lib-dir with no path exits 1"
+run --lib-dir
+expect_exit 1
+
+check "run-lib with no lib path exits 1"
+run run-lib
+expect_exit 1
+
+check "load with no profile path exits 1"
+run load
+expect_exit 1
+
+# =============================================================================
+#  SECTION 13 — Option combinations
+# =============================================================================
+section "Option combinations"
+
+# --no-color + --verbose together
+check "--no-color --verbose check-cmd sh exits 0"
+run --no-color --verbose check-cmd sh
+expect_exit 0
+
+check "--no-color --verbose output has no ANSI sequences"
+expect_no_ansi
+
+check "--no-color --verbose output still shows VERB lines"
+expect_output_has "VERB"
+
+# --quiet + --filter fail on a failing check
+check "--quiet --filter fail on missing command exits 1"
+run --quiet --filter fail check-cmd __nonexistent_xyz_404__
+expect_exit 1
+
+# --dry-run + --verbose
+check "--dry-run --verbose check-kconfig exits 0"
+run --dry-run --verbose check-kconfig CONFIG_NET
+expect_exit 0
+
+check "--dry-run --verbose output shows DRY marker"
+expect_output_has "DRY"
+
+# --dry-run + --no-color
+check "--dry-run --no-color list-libs exits 0"
+run --dry-run --no-color list-libs
+expect_exit 0
+
+check "--dry-run --no-color output has no ANSI sequences"
+expect_no_ansi
+
+# Comma-separated --filter values
+check "--filter fail,warn check-cmd sh exits 0"
+run --filter "fail,warn" check-cmd sh
+expect_exit 0
+
+check "--filter fail,warn hides OK results"
+expect_output_not_has "\[ OK \]"
+
+check "--filter fail,ok check-cmd sh exits 0"
+run --filter "fail,ok" check-cmd sh
+expect_exit 0
+
+check "--filter fail,ok shows OK results"
+expect_output_has "OK"
+
+# Short-form aliases
+check "-v is a short alias for --verbose"
+run -v check-cmd sh
+expect_exit 0
+
+check "-v output shows VERB lines"
+expect_output_has "VERB"
+
+check "-q is a short alias for --quiet"
+run -q check-cmd sh
+expect_exit 0
+
+check "-q suppresses OK output"
+expect_output_not_has "\[ OK \]"
+
+check "-r is a short alias for --report"
+run -r "${WORK_DIR}/short_alias_report.txt" --dry-run run-lib foundries/lib_fioconfig.sh
+expect_exit 0
+
+check "-r creates the report file"
+expect_file_exists "${WORK_DIR}/short_alias_report.txt"
+
+# =============================================================================
+#  Summary
+# =============================================================================
 printf '\n\033[1m%s\033[0m\n' "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 printf 'PASS: \033[32m%d\033[0m   FAIL: \033[31m%d\033[0m   SKIP: \033[33m%d\033[0m\n' \
-    "${_P}" "${_F}" "${_S}"
+    "${PASS}" "${FAIL}" "${SKIP}"
 
-if [ "${_F}" -eq 0 ]; then
-    printf '\033[32mAll %d tests passed.\033[0m\n' "${_P}"
+if [ "${FAIL}" -eq 0 ]; then
+    printf '\033[32mAll %d tests passed.\033[0m\n' "${PASS}"
     exit 0
 else
-    printf '\033[31m%d test(s) failed. Re-run with -v for output.\033[0m\n' "${_F}"
+    printf '\033[31m%d test(s) failed.  Re-run with -v for captured output.\033[0m\n' "${FAIL}"
     exit 1
 fi
