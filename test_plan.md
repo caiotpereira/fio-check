@@ -37,11 +37,12 @@ Exit code `0` = all tests passed, `1` = one or more failed.
 | `file: <path>` | File must exist on disk |
 | `file-has: <text>` | File content must contain the string |
 
-### Known Limitation — Bug B2 (dry-run incomplete)
+### Bug B2 — fixed
 
-> The `--dry-run` flag suppresses the framework `check_*` functions but does **not** suppress inline filesystem/device probes inside lib scripts — those check `TESTFW_DRY_RUN` / `FIOCHECK_DRY_RUN`, neither of which is exported by `fio-check.sh`.
->
-> Tests that invoke `run-all`, `run-all-libs`, or `load` are therefore marked **exit 0\|1** — they pass regardless of whether the system has Docker, aktualizr-lite, etc. installed. This is a known defect documented in `review.txt` item B2, not a test gap.
+> Bug B2 (`--dry-run` not propagated to lib scripts) has been corrected.
+> `fio-check.sh` now exports `FIOCHECK_DRY_RUN=1` when `--dry-run` is given,
+> and all lib scripts have been updated to check that variable.
+> Tests in sections 9–11 now assert exit `0` for dry-run invocations.
 
 ---
 
@@ -559,93 +560,93 @@ Verify that `run-lib` sources a lib file, calls the derived `_all` function or a
 
 ## Section 9 — run-all-libs
 
-Verify that `run-all-libs` discovers all lib modules, prints a summary table, and accepts display options. Exit code is `0|1` due to Bug B2 (see Known Limitation).
+Verify that `run-all-libs` discovers all lib modules, prints a summary table, and accepts display options.
 
-### TC-9.1 — `--dry-run` — does not crash ⚠️
+### TC-9.1 — `--dry-run` — exits 0
 
 **Command:** `./fio-check.sh --dry-run run-all-libs`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-9.2 — `--dry-run` — summary table header present ⚠️
+### TC-9.2 — `--dry-run` — summary table header present
 
 **Command:** `./fio-check.sh --dry-run run-all-libs`  
 **Expected:** output: `Run All Libs`
 
-### TC-9.3 — `--dry-run` — module count shown ⚠️
+### TC-9.3 — `--dry-run` — module count shown
 
 **Command:** `./fio-check.sh --dry-run run-all-libs`  
 **Expected:** output: `module`
 
-### TC-9.4 — `--quiet --dry-run` — does not crash ⚠️
+### TC-9.4 — `--quiet --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --quiet --dry-run run-all-libs`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-9.5 — `--filter fail --dry-run` — does not crash ⚠️
+### TC-9.5 — `--filter fail --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --filter fail --dry-run run-all-libs`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-9.6 — `--no-color --dry-run` — does not crash ⚠️
+### TC-9.6 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all-libs`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-9.7 — `--no-color --dry-run` — no ANSI escape sequences ⚠️
+### TC-9.7 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all-libs`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)
 
-### TC-9.8 — `-r --dry-run` — does not crash ⚠️
+### TC-9.8 — `-r --dry-run` — exits 0
 
 **Command:** `./fio-check.sh -r <tmpdir>/all_libs.txt --dry-run --fn lib_aktualizr_set_version run-all-libs`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
 ---
 
 ## Section 10 — run-all
 
-Verify that `run-all` discovers all profiles, runs each one, prints a combined summary table, and accepts display and path options. Exit code is `0|1` due to Bug B2.
+Verify that `run-all` discovers all profiles, runs each one, prints a combined summary table, and accepts display and path options.
 
-### TC-10.1 — `--dry-run` — does not crash ⚠️
+### TC-10.1 — `--dry-run` — exits 0
 
 **Command:** `./fio-check.sh --dry-run run-all`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-10.2 — `--dry-run` — summary header present ⚠️
+### TC-10.2 — `--dry-run` — summary header present
 
 **Command:** `./fio-check.sh --dry-run run-all`  
 **Expected:** output: `Run All`
 
-### TC-10.3 — `--dry-run` — profile count shown ⚠️
+### TC-10.3 — `--dry-run` — profile count shown
 
 **Command:** `./fio-check.sh --dry-run run-all`  
 **Expected:** output: `profile`
 
-### TC-10.4 — `--quiet --dry-run` — does not crash ⚠️
+### TC-10.4 — `--quiet --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --quiet --dry-run run-all`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-10.5 — `--filter fail --dry-run` — does not crash ⚠️
+### TC-10.5 — `--filter fail --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --filter fail --dry-run run-all`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-10.6 — `--no-color --dry-run` — does not crash ⚠️
+### TC-10.6 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-10.7 — `--no-color --dry-run` — no ANSI escape sequences ⚠️
+### TC-10.7 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)
 
-### TC-10.8 — `--profiles-dir` override ⚠️
+### TC-10.8 — `--profiles-dir` override — exits 0
 
 **Command:** `./fio-check.sh --profiles-dir ./profiles --dry-run run-all`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
 ---
 
@@ -653,20 +654,20 @@ Verify that `run-all` discovers all profiles, runs each one, prints a combined s
 
 Verify that `load` resolves profiles by path and by folder name, generates a report with `-r`, and rejects nonexistent targets.
 
-### TC-11.1 — `--dry-run` load by file path — does not crash ⚠️
+### TC-11.1 — `--dry-run` load by file path — exits 0
 
 **Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-11.2 — `--dry-run` load by file path — profile identified in output ⚠️
+### TC-11.2 — `--dry-run` load by file path — profile identified in output
 
 **Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
 **Expected:** output: `docker`, `Profile`, or `Loading`
 
-### TC-11.3 — `--dry-run` load by folder name — does not crash ⚠️
+### TC-11.3 — `--dry-run` load by folder name — exits 0
 
 **Command:** `./fio-check.sh --dry-run load docker`  
-**Expected:** exit `0|1`  
+**Expected:** exit `0`  
 **Note:** Folder-name resolution: finds first `.sh` inside `profiles/docker/`.
 
 ### TC-11.4 — Nonexistent profile — exit code
@@ -692,17 +693,17 @@ Verify that `load` resolves profiles by path and by folder name, generates a rep
 
 **Expected:** file contains `PASS:`
 
-### TC-11.9 — `--filter fail --dry-run` — does not crash ⚠️
+### TC-11.9 — `--filter fail --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --filter fail --dry-run load docker/docker.sh`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-11.10 — `--no-color --dry-run` — does not crash ⚠️
+### TC-11.10 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run load docker/docker.sh`  
-**Expected:** exit `0|1`
+**Expected:** exit `0`
 
-### TC-11.11 — `--no-color --dry-run` — no ANSI escape sequences ⚠️
+### TC-11.11 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run load docker/docker.sh`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)

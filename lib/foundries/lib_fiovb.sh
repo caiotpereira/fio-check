@@ -112,7 +112,7 @@ lib_fiovb_cmd() {
 # lib_fiovb_devices — TEE and RPMB device node checks
 # ---------------------------------------------------------------------------
 lib_fiovb_devices() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_devices (dry-run: device node probes skipped)"
         return 0
     fi
@@ -162,7 +162,7 @@ lib_fiovb_devices() {
 # lib_fiovb_supplicant_service — tee-supplicant systemd service check
 # ---------------------------------------------------------------------------
 lib_fiovb_supplicant_service() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_supplicant_service (dry-run: systemctl probe skipped)"
         return 0
     fi
@@ -209,7 +209,7 @@ lib_fiovb_supplicant_service() {
 # Only runs when fiovb binary and /dev/tee0 are both available.
 # ---------------------------------------------------------------------------
 lib_fiovb_runtime_check() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fiovb_runtime_check (dry-run: fiovb_printenv skipped)"
         return 0
     fi

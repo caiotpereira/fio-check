@@ -49,7 +49,7 @@ lib_compose_apps_early_start_cmd() {
 # lib_compose_apps_early_start_files — installed and runtime file checks
 # ---------------------------------------------------------------------------
 lib_compose_apps_early_start_files() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_compose_apps_early_start_files (dry-run: filesystem probes skipped)"
         return 0
     fi

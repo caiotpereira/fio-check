@@ -42,7 +42,7 @@ export FIO_TEST_PROFILES="${SCRIPT_DIR}/profiles"
 export FIO_TEST_LIB_EXTRA="${SCRIPT_DIR}/lib-extras" #to be defined
 export FIO_TEST_PROFILES_EXTRA="${SCRIPT_DIR}/profiles-extras" #To be defined
 export FIO_TEST_FILTER=""
-export FIO_TEST_DRY_RUN=""
+export FIOCHECK_DRY_RUN=0
 
 # =============================================================================
 #  Internal Variables
@@ -1296,7 +1296,7 @@ main() {
                 ;;
             --dry-run)
                 DRY_RUN=1
-                export FIO_TEST_DRY_RUN=1
+                export FIOCHECK_DRY_RUN=1
                 ;;
             list-profiles|list-libs|load|run-lib|run-all|run-all-libs|check-deps|check-kconfig|check-cmd|report|help)
                 cmd="$1"; shift; break ;;

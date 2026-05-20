@@ -543,15 +543,12 @@ expect_file_has "${WORK_DIR}/run_lib_report.txt" "PASS:"
 
 # =============================================================================
 #  SECTION 9 — run-all-libs
-#  NOTE: exit code is 0|1 throughout this section because Bug B2 means
-#  lib_docker_cgroup_mount runs even under --dry-run and fails on hosts
-#  without a cgroup filesystem (e.g. macOS).  See review.txt item B2.
 # =============================================================================
 section "run-all-libs"
 
-check "--dry-run run-all-libs does not crash (exit 0 or 1, see Bug B2)"
+check "--dry-run run-all-libs exits 0"
 run --dry-run run-all-libs
-expect_exit_any 0 1
+expect_exit 0
 
 check "--dry-run run-all-libs output shows summary header"
 expect_output_has "Run All Libs"
@@ -559,37 +556,36 @@ expect_output_has "Run All Libs"
 check "--dry-run run-all-libs output shows module count"
 expect_output_has "module"
 
-check "--quiet --dry-run run-all-libs does not crash"
+check "--quiet --dry-run run-all-libs exits 0"
 run --quiet --dry-run run-all-libs
-expect_exit_any 0 1
+expect_exit 0
 
-check "--filter fail --dry-run run-all-libs does not crash"
+check "--filter fail --dry-run run-all-libs exits 0"
 run --filter fail --dry-run run-all-libs
-expect_exit_any 0 1
+expect_exit 0
 
-check "--no-color --dry-run run-all-libs does not crash"
+check "--no-color --dry-run run-all-libs exits 0"
 run --no-color --dry-run run-all-libs
-expect_exit_any 0 1
+expect_exit 0
 
 check "--no-color --dry-run run-all-libs produces no ANSI escape sequences"
 expect_no_ansi
 
-check "-r --dry-run run-all-libs does not crash"
+check "-r --dry-run run-all-libs exits 0"
 run -r "${WORK_DIR}/all_libs_report.txt" \
     --dry-run \
     --fn lib_aktualizr_set_version \
     run-all-libs
-expect_exit_any 0 1
+expect_exit 0
 
 # =============================================================================
 #  SECTION 10 — run-all
-#  NOTE: same Bug B2 caveat as run-all-libs above.
 # =============================================================================
 section "run-all"
 
-check "--dry-run run-all does not crash (exit 0 or 1, see Bug B2)"
+check "--dry-run run-all exits 0"
 run --dry-run run-all
-expect_exit_any 0 1
+expect_exit 0
 
 check "--dry-run run-all output shows summary header"
 expect_output_has "Run All"
@@ -597,42 +593,41 @@ expect_output_has "Run All"
 check "--dry-run run-all output shows profile count"
 expect_output_has "profile"
 
-check "--quiet --dry-run run-all does not crash"
+check "--quiet --dry-run run-all exits 0"
 run --quiet --dry-run run-all
-expect_exit_any 0 1
+expect_exit 0
 
-check "--filter fail --dry-run run-all does not crash"
+check "--filter fail --dry-run run-all exits 0"
 run --filter fail --dry-run run-all
-expect_exit_any 0 1
+expect_exit 0
 
-check "--no-color --dry-run run-all does not crash"
+check "--no-color --dry-run run-all exits 0"
 run --no-color --dry-run run-all
-expect_exit_any 0 1
+expect_exit 0
 
 check "--no-color --dry-run run-all produces no ANSI escape sequences"
 expect_no_ansi
 
-check "--profiles-dir override --dry-run run-all does not crash"
+check "--profiles-dir override --dry-run run-all exits 0"
 run --profiles-dir "${SCRIPT_DIR}/profiles" --dry-run run-all
-expect_exit_any 0 1
+expect_exit 0
 
 # =============================================================================
 #  SECTION 11 — load
-#  NOTE: same Bug B2 caveat for all --dry-run load tests.
 # =============================================================================
 section "load"
 
-check "--dry-run load docker/docker.sh does not crash (exit 0 or 1, see Bug B2)"
+check "--dry-run load docker/docker.sh exits 0"
 run --dry-run load docker/docker.sh
-expect_exit_any 0 1
+expect_exit 0
 
 check "--dry-run load output identifies the profile"
 expect_output_has "docker\|Profile\|Loading"
 
 # Folder-name resolution: finds the first .sh inside profiles/docker/
-check "--dry-run load docker (folder name) does not crash"
+check "--dry-run load docker (folder name) exits 0"
 run --dry-run load docker
-expect_exit_any 0 1
+expect_exit 0
 
 check "load <nonexistent profile> exits 1"
 run load __no_such_profile_xyz__
@@ -653,13 +648,13 @@ expect_file_has "${WORK_DIR}/load_report.txt" "Foundries Check Report"
 check "-r load report file contains PASS summary line"
 expect_file_has "${WORK_DIR}/load_report.txt" "PASS:"
 
-check "--filter fail --dry-run load does not crash"
+check "--filter fail --dry-run load exits 0"
 run --filter fail --dry-run load docker/docker.sh
-expect_exit_any 0 1
+expect_exit 0
 
-check "--no-color --dry-run load does not crash"
+check "--no-color --dry-run load exits 0"
 run --no-color --dry-run load docker/docker.sh
-expect_exit_any 0 1
+expect_exit 0
 
 check "--no-color --dry-run load produces no ANSI escape sequences"
 expect_no_ansi

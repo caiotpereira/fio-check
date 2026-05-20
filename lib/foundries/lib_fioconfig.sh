@@ -103,7 +103,7 @@ lib_fioconfig_cmd() {
 # lib_fioconfig_files_check — runtime paths and file checks
 # ---------------------------------------------------------------------------
 lib_fioconfig_files_check() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_fioconfig_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi

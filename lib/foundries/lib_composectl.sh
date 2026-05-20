@@ -126,7 +126,7 @@ lib_composectl_cmd_version() {
 # lib_composectl_files_check — runtime paths and storage layout
 # ---------------------------------------------------------------------------
 lib_composectl_files_check() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_composectl_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi
@@ -226,7 +226,7 @@ lib_composectl_files_check() {
 # lib_composectl_runtime_check — functional checks against live Docker daemon
 # ---------------------------------------------------------------------------
 lib_composectl_runtime_check() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_composectl_runtime_check (dry-run: system probe skipped)"
         return 0
     fi

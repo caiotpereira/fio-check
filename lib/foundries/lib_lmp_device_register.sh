@@ -125,7 +125,7 @@ lib_lmp_device_register_cmd() {
 # lib_lmp_device_register_files_check — config and post-registration state
 # ---------------------------------------------------------------------------
 lib_lmp_device_register_files_check() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_lmp_device_register_files_check (dry-run: filesystem probes skipped)"
         return 0
     fi
@@ -261,7 +261,7 @@ lib_lmp_device_register_files_check() {
 # registration workflows do not install it, so absence is warn-only.
 # ---------------------------------------------------------------------------
 lib_lmp_device_register_service() {
-    if [ "${TESTFW_DRY_RUN:-0}" -eq 1 ]; then
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
         _dry_print "lib_lmp_device_register_service (dry-run: systemctl probe skipped)"
         return 0
     fi
