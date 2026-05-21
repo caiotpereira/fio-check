@@ -42,7 +42,8 @@ Exit code `0` = all tests passed, `1` = one or more failed.
 > Bug B2 (`--dry-run` not propagated to lib scripts) has been corrected.
 > `fio-check.sh` now exports `FIOCHECK_DRY_RUN=1` when `--dry-run` is given,
 > and all lib scripts have been updated to check that variable.
-> Tests in sections 9–11 now assert exit `0` for dry-run invocations.
+> Tests in sections 9–11 run real profile and lib executions (no `--dry-run`);
+> exit code is `0|1` because results depend on what is installed on the host.
 
 ---
 
@@ -366,7 +367,7 @@ Verify the command existence checker under all display options and with both pas
 
 ## Section 6 — check-kconfig
 
-Verify kernel config symbol lookup, `CONFIG_` prefix stripping, optional expected-value argument, and dry-run behaviour. Live checks are system-dependent and may skip if no kernel config is found.
+Verify kernel config symbol lookup, `CONFIG_` prefix stripping, optional expected-value argument, and dry-run behaviour. `CONFIG_NET` must be enabled on a correctly provisioned device.
 
 ### TC-6.1 — `--dry-run` with `CONFIG_` prefix — exit code
 
@@ -393,12 +394,12 @@ Verify kernel config symbol lookup, `CONFIG_` prefix stripping, optional expecte
 **Command:** `./fio-check.sh --dry-run check-kconfig INET`  
 **Expected:** output: `DRY`
 
-### TC-6.6 — Live check — does not crash ⚠️
+### TC-6.6 — Live check — exits 0
 
 **Command:** `./fio-check.sh check-kconfig CONFIG_NET`  
-**Expected:** exit `0|1` — depends on whether kernel config is accessible
+**Expected:** exit `0`
 
-### TC-6.7 — Live check — produces recognisable output ⚠️
+### TC-6.7 — Live check — produces recognisable output
 
 **Command:** `./fio-check.sh check-kconfig CONFIG_NET`  
 **Expected:** output: `kconfig:` or `no kernel config`
@@ -560,90 +561,150 @@ Verify that `run-lib` sources a lib file, calls the derived `_all` function or a
 
 ## Section 9 — run-all-libs
 
-Verify that `run-all-libs` discovers all lib modules, prints a summary table, and accepts display options.
+Verify that `run-all-libs` discovers all lib modules, executes them, prints a summary table, and accepts display options. All checks must pass on a correctly provisioned device; exit code `1` is a test failure.
 
-### TC-9.1 — `--dry-run` — exits 0
+### TC-9.1 — exits 0
+
+**Command:** `./fio-check.sh run-all-libs`  
+**Expected:** exit `0`
+
+### TC-9.2 — summary table header present
+
+**Command:** `./fio-check.sh run-all-libs`  
+**Expected:** output: `Run All Libs`
+
+### TC-9.3 — module count shown
+
+**Command:** `./fio-check.sh run-all-libs`  
+**Expected:** output: `module`
+
+### TC-9.4 — `--quiet` — exits 0
+
+**Command:** `./fio-check.sh --quiet run-all-libs`  
+**Expected:** exit `0`
+
+### TC-9.5 — `--filter fail` — exits 0
+
+**Command:** `./fio-check.sh --filter fail run-all-libs`  
+**Expected:** exit `0`
+
+### TC-9.6 — `--no-color` — exits 0
+
+**Command:** `./fio-check.sh --no-color run-all-libs`  
+**Expected:** exit `0`
+
+### TC-9.7 — `--no-color` — no ANSI escape sequences
+
+**Command:** `./fio-check.sh --no-color run-all-libs`  
+**Expected:** absent: ANSI CSI escape sequence (`ESC[`)
+
+### TC-9.8 — `-r` — exits 0
+
+**Command:** `./fio-check.sh -r <tmpdir>/all_libs.txt --fn lib_aktualizr_set_version run-all-libs`  
+**Expected:** exit `0`
+
+### TC-9.9 — `--dry-run` — exits 0
 
 **Command:** `./fio-check.sh --dry-run run-all-libs`  
 **Expected:** exit `0`
 
-### TC-9.2 — `--dry-run` — summary table header present
+### TC-9.10 — `--dry-run` — DRY marker in output
+
+**Command:** `./fio-check.sh --dry-run run-all-libs`  
+**Expected:** output: `DRY`
+
+### TC-9.11 — `--dry-run` — summary header present
 
 **Command:** `./fio-check.sh --dry-run run-all-libs`  
 **Expected:** output: `Run All Libs`
 
-### TC-9.3 — `--dry-run` — module count shown
-
-**Command:** `./fio-check.sh --dry-run run-all-libs`  
-**Expected:** output: `module`
-
-### TC-9.4 — `--quiet --dry-run` — exits 0
-
-**Command:** `./fio-check.sh --quiet --dry-run run-all-libs`  
-**Expected:** exit `0`
-
-### TC-9.5 — `--filter fail --dry-run` — exits 0
-
-**Command:** `./fio-check.sh --filter fail --dry-run run-all-libs`  
-**Expected:** exit `0`
-
-### TC-9.6 — `--no-color --dry-run` — exits 0
+### TC-9.12 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all-libs`  
 **Expected:** exit `0`
 
-### TC-9.7 — `--no-color --dry-run` — no ANSI escape sequences
+### TC-9.13 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all-libs`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)
 
-### TC-9.8 — `-r --dry-run` — exits 0
+### TC-9.14 — `-r --dry-run` — exits 0
 
-**Command:** `./fio-check.sh -r <tmpdir>/all_libs.txt --dry-run --fn lib_aktualizr_set_version run-all-libs`  
+**Command:** `./fio-check.sh -r <tmpdir>/all_libs_dry.txt --dry-run --fn lib_aktualizr_set_version run-all-libs`  
 **Expected:** exit `0`
 
 ---
 
 ## Section 10 — run-all
 
-Verify that `run-all` discovers all profiles, runs each one, prints a combined summary table, and accepts display and path options.
+Verify that `run-all` discovers all profiles, runs each one, prints a combined summary table, and accepts display and path options. All checks must pass on a correctly provisioned device; exit code `1` is a test failure. Dry runs must always exit `0` and show `DRY` markers.
 
-### TC-10.1 — `--dry-run` — exits 0
+### TC-10.1 — exits 0
+
+**Command:** `./fio-check.sh run-all`  
+**Expected:** exit `0`
+
+### TC-10.2 — summary header present
+
+**Command:** `./fio-check.sh run-all`  
+**Expected:** output: `Run All`
+
+### TC-10.3 — profile count shown
+
+**Command:** `./fio-check.sh run-all`  
+**Expected:** output: `profile`
+
+### TC-10.4 — `--quiet` — exits 0
+
+**Command:** `./fio-check.sh --quiet run-all`  
+**Expected:** exit `0`
+
+### TC-10.5 — `--filter fail` — exits 0
+
+**Command:** `./fio-check.sh --filter fail run-all`  
+**Expected:** exit `0`
+
+### TC-10.6 — `--no-color` — exits 0
+
+**Command:** `./fio-check.sh --no-color run-all`  
+**Expected:** exit `0`
+
+### TC-10.7 — `--no-color` — no ANSI escape sequences
+
+**Command:** `./fio-check.sh --no-color run-all`  
+**Expected:** absent: ANSI CSI escape sequence (`ESC[`)
+
+### TC-10.8 — `--profiles-dir` override — exits 0
+
+**Command:** `./fio-check.sh --profiles-dir ./profiles run-all`  
+**Expected:** exit `0`
+
+### TC-10.9 — `--dry-run` — exits 0
 
 **Command:** `./fio-check.sh --dry-run run-all`  
 **Expected:** exit `0`
 
-### TC-10.2 — `--dry-run` — summary header present
+### TC-10.10 — `--dry-run` — DRY marker in output
+
+**Command:** `./fio-check.sh --dry-run run-all`  
+**Expected:** output: `DRY`
+
+### TC-10.11 — `--dry-run` — summary header present
 
 **Command:** `./fio-check.sh --dry-run run-all`  
 **Expected:** output: `Run All`
 
-### TC-10.3 — `--dry-run` — profile count shown
-
-**Command:** `./fio-check.sh --dry-run run-all`  
-**Expected:** output: `profile`
-
-### TC-10.4 — `--quiet --dry-run` — exits 0
-
-**Command:** `./fio-check.sh --quiet --dry-run run-all`  
-**Expected:** exit `0`
-
-### TC-10.5 — `--filter fail --dry-run` — exits 0
-
-**Command:** `./fio-check.sh --filter fail --dry-run run-all`  
-**Expected:** exit `0`
-
-### TC-10.6 — `--no-color --dry-run` — exits 0
+### TC-10.12 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all`  
 **Expected:** exit `0`
 
-### TC-10.7 — `--no-color --dry-run` — no ANSI escape sequences
+### TC-10.13 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run run-all`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)
 
-### TC-10.8 — `--profiles-dir` override — exits 0
+### TC-10.14 — `--profiles-dir --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --profiles-dir ./profiles --dry-run run-all`  
 **Expected:** exit `0`
@@ -652,21 +713,21 @@ Verify that `run-all` discovers all profiles, runs each one, prints a combined s
 
 ## Section 11 — load
 
-Verify that `load` resolves profiles by path and by folder name, generates a report with `-r`, and rejects nonexistent targets.
+Verify that `load` resolves profiles by path and by folder name, generates a report with `-r`, and rejects nonexistent targets. All checks must pass on a correctly provisioned device; exit code `1` is a test failure. Dry runs must always exit `0` and show `DRY` markers.
 
-### TC-11.1 — `--dry-run` load by file path — exits 0
+### TC-11.1 — load by file path — exits 0
 
-**Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
+**Command:** `./fio-check.sh load docker/docker.sh`  
 **Expected:** exit `0`
 
-### TC-11.2 — `--dry-run` load by file path — profile identified in output
+### TC-11.2 — load by file path — profile identified in output
 
-**Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
+**Command:** `./fio-check.sh load docker/docker.sh`  
 **Expected:** output: `docker`, `Profile`, or `Loading`
 
-### TC-11.3 — `--dry-run` load by folder name — exits 0
+### TC-11.3 — load by folder name — exits 0
 
-**Command:** `./fio-check.sh --dry-run load docker`  
+**Command:** `./fio-check.sh load docker`  
 **Expected:** exit `0`  
 **Note:** Folder-name resolution: finds first `.sh` inside `profiles/docker/`.
 
@@ -682,7 +743,7 @@ Verify that `load` resolves profiles by path and by folder name, generates a rep
 
 ### TC-11.6 — `-r` creates a report file
 
-**Command:** `./fio-check.sh -r <tmpdir>/load_report.txt --dry-run load docker/docker.sh`  
+**Command:** `./fio-check.sh -r <tmpdir>/load_report.txt load docker/docker.sh`  
 **Expected:** file: `<tmpdir>/load_report.txt`
 
 ### TC-11.7 — `-r` report file — header line
@@ -693,20 +754,92 @@ Verify that `load` resolves profiles by path and by folder name, generates a rep
 
 **Expected:** file contains `PASS:`
 
-### TC-11.9 — `--filter fail --dry-run` — exits 0
+### TC-11.9 — `--filter fail` — exits 0
 
-**Command:** `./fio-check.sh --filter fail --dry-run load docker/docker.sh`  
+**Command:** `./fio-check.sh --filter fail load docker/docker.sh`  
 **Expected:** exit `0`
 
-### TC-11.10 — `--no-color --dry-run` — exits 0
+### TC-11.10 — `--no-color` — exits 0
+
+**Command:** `./fio-check.sh --no-color load docker/docker.sh`  
+**Expected:** exit `0`
+
+### TC-11.11 — `--no-color` — no ANSI escape sequences
+
+**Command:** `./fio-check.sh --no-color load docker/docker.sh`  
+**Expected:** absent: ANSI CSI escape sequence (`ESC[`)
+
+### TC-11.12 — `--dry-run` load by file path — exits 0
+
+**Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
+**Expected:** exit `0`
+
+### TC-11.13 — `--dry-run` load — DRY marker in output
+
+**Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
+**Expected:** output: `DRY`
+
+### TC-11.14 — `--dry-run` load — profile identified in output
+
+**Command:** `./fio-check.sh --dry-run load docker/docker.sh`  
+**Expected:** output: `docker`, `Profile`, or `Loading`
+
+### TC-11.15 — `--dry-run` load by folder name — exits 0
+
+**Command:** `./fio-check.sh --dry-run load docker`  
+**Expected:** exit `0`
+
+### TC-11.16 — `-r --dry-run` creates a report file
+
+**Command:** `./fio-check.sh -r <tmpdir>/load_dry_report.txt --dry-run load docker/docker.sh`  
+**Expected:** file: `<tmpdir>/load_dry_report.txt`
+
+### TC-11.17 — `-r --dry-run` report file — header line
+
+**Expected:** file contains `Foundries Check Report`
+
+### TC-11.18 — `--no-color --dry-run` — exits 0
 
 **Command:** `./fio-check.sh --no-color --dry-run load docker/docker.sh`  
 **Expected:** exit `0`
 
-### TC-11.11 — `--no-color --dry-run` — no ANSI escape sequences
+### TC-11.19 — `--no-color --dry-run` — no ANSI escape sequences
 
 **Command:** `./fio-check.sh --no-color --dry-run load docker/docker.sh`  
 **Expected:** absent: ANSI CSI escape sequence (`ESC[`)
+
+### TC-11.20 — load `foundries/lmp-v97.sh` — exits 0
+
+**Command:** `./fio-check.sh load foundries/lmp-v97.sh`  
+**Expected:** exit `0`
+
+### TC-11.21 — load `foundries/lmp-v97.sh` — profile identified in output
+
+**Command:** `./fio-check.sh load foundries/lmp-v97.sh`  
+**Expected:** output: `lmp`, `Profile`, or `Loading`
+
+### TC-11.22 — `-r` load `foundries/lmp-v97.sh` — creates report file
+
+**Command:** `./fio-check.sh -r <tmpdir>/lmp_report.txt load foundries/lmp-v97.sh`  
+**Expected:** file: `<tmpdir>/lmp_report.txt`
+
+### TC-11.23 — `-r` lmp-v97 report file — header line
+
+**Expected:** file contains `Foundries Check Report`
+
+### TC-11.24 — `-r` lmp-v97 report file — PASS summary line
+
+**Expected:** file contains `PASS:`
+
+### TC-11.25 — `--dry-run` load `foundries/lmp-v97.sh` — exits 0
+
+**Command:** `./fio-check.sh --dry-run load foundries/lmp-v97.sh`  
+**Expected:** exit `0`
+
+### TC-11.26 — `--dry-run` load `foundries/lmp-v97.sh` — DRY marker in output
+
+**Command:** `./fio-check.sh --dry-run load foundries/lmp-v97.sh`  
+**Expected:** output: `DRY`
 
 ---
 
