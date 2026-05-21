@@ -415,10 +415,9 @@ expect_exit 0
 check "bare symbol INET output shows DRY (prefix was stripped correctly)"
 expect_output_has "DRY"
 
-# Live check — result depends on whether a kernel config is accessible
-check "live check-kconfig exits 0 or 1 (system-dependent)"
+check "live check-kconfig CONFIG_NET exits 0"
 run check-kconfig CONFIG_NET
-expect_exit_any 0 1
+expect_exit 0
 
 check "live check-kconfig output shows a recognisable result"
 expect_output_has "kconfig:\|no kernel config"
@@ -546,23 +545,48 @@ expect_file_has "${WORK_DIR}/run_lib_report.txt" "PASS:"
 # =============================================================================
 section "run-all-libs"
 
+# Real runs — all checks must pass on a correctly provisioned device
+check "run-all-libs exits 0"
+run run-all-libs
+expect_exit 0
+
+check "run-all-libs output shows summary header"
+expect_output_has "Run All Libs"
+
+check "run-all-libs output shows module count"
+expect_output_has "module"
+
+check "--quiet run-all-libs exits 0"
+run --quiet run-all-libs
+expect_exit 0
+
+check "--filter fail run-all-libs exits 0"
+run --filter fail run-all-libs
+expect_exit 0
+
+check "--no-color run-all-libs exits 0"
+run --no-color run-all-libs
+expect_exit 0
+
+check "--no-color run-all-libs produces no ANSI escape sequences"
+expect_no_ansi
+
+check "-r run-all-libs exits 0"
+run -r "${WORK_DIR}/all_libs_report.txt" \
+    --fn lib_aktualizr_set_version \
+    run-all-libs
+expect_exit 0
+
+# Dry runs — all checks are skipped; exit must be 0 and DRY markers must appear
 check "--dry-run run-all-libs exits 0"
 run --dry-run run-all-libs
 expect_exit 0
 
+check "--dry-run run-all-libs output shows DRY marker"
+expect_output_has "DRY"
+
 check "--dry-run run-all-libs output shows summary header"
 expect_output_has "Run All Libs"
-
-check "--dry-run run-all-libs output shows module count"
-expect_output_has "module"
-
-check "--quiet --dry-run run-all-libs exits 0"
-run --quiet --dry-run run-all-libs
-expect_exit 0
-
-check "--filter fail --dry-run run-all-libs exits 0"
-run --filter fail --dry-run run-all-libs
-expect_exit 0
 
 check "--no-color --dry-run run-all-libs exits 0"
 run --no-color --dry-run run-all-libs
@@ -572,7 +596,7 @@ check "--no-color --dry-run run-all-libs produces no ANSI escape sequences"
 expect_no_ansi
 
 check "-r --dry-run run-all-libs exits 0"
-run -r "${WORK_DIR}/all_libs_report.txt" \
+run -r "${WORK_DIR}/all_libs_dryrun_report.txt" \
     --dry-run \
     --fn lib_aktualizr_set_version \
     run-all-libs
@@ -583,23 +607,46 @@ expect_exit 0
 # =============================================================================
 section "run-all"
 
+# Real runs — all checks must pass on a correctly provisioned device
+check "run-all exits 0"
+run run-all
+expect_exit 0
+
+check "run-all output shows summary header"
+expect_output_has "Run All"
+
+check "run-all output shows profile count"
+expect_output_has "profile"
+
+check "--quiet run-all exits 0"
+run --quiet run-all
+expect_exit 0
+
+check "--filter fail run-all exits 0"
+run --filter fail run-all
+expect_exit 0
+
+check "--no-color run-all exits 0"
+run --no-color run-all
+expect_exit 0
+
+check "--no-color run-all produces no ANSI escape sequences"
+expect_no_ansi
+
+check "--profiles-dir override run-all exits 0"
+run --profiles-dir "${SCRIPT_DIR}/profiles" run-all
+expect_exit 0
+
+# Dry runs
 check "--dry-run run-all exits 0"
 run --dry-run run-all
 expect_exit 0
 
+check "--dry-run run-all output shows DRY marker"
+expect_output_has "DRY"
+
 check "--dry-run run-all output shows summary header"
 expect_output_has "Run All"
-
-check "--dry-run run-all output shows profile count"
-expect_output_has "profile"
-
-check "--quiet --dry-run run-all exits 0"
-run --quiet --dry-run run-all
-expect_exit 0
-
-check "--filter fail --dry-run run-all exits 0"
-run --filter fail --dry-run run-all
-expect_exit 0
 
 check "--no-color --dry-run run-all exits 0"
 run --no-color --dry-run run-all
@@ -617,16 +664,17 @@ expect_exit 0
 # =============================================================================
 section "load"
 
-check "--dry-run load docker/docker.sh exits 0"
-run --dry-run load docker/docker.sh
+# Real runs — all checks must pass on a correctly provisioned device
+check "load docker/docker.sh exits 0"
+run load docker/docker.sh
 expect_exit 0
 
-check "--dry-run load output identifies the profile"
+check "load output identifies the profile"
 expect_output_has "docker\|Profile\|Loading"
 
 # Folder-name resolution: finds the first .sh inside profiles/docker/
-check "--dry-run load docker (folder name) exits 0"
-run --dry-run load docker
+check "load docker (folder name) exits 0"
+run load docker
 expect_exit 0
 
 check "load <nonexistent profile> exits 1"
@@ -636,8 +684,7 @@ expect_exit 1
 check "load <nonexistent profile> output shows error message"
 expect_output_has "not found\|Profile not found"
 
-# Report file generation via load
-run -r "${WORK_DIR}/load_report.txt" --dry-run load docker/docker.sh
+run -r "${WORK_DIR}/load_report.txt" load docker/docker.sh
 
 check "-r creates a report file after load"
 expect_file_exists "${WORK_DIR}/load_report.txt"
@@ -648,9 +695,39 @@ expect_file_has "${WORK_DIR}/load_report.txt" "Foundries Check Report"
 check "-r load report file contains PASS summary line"
 expect_file_has "${WORK_DIR}/load_report.txt" "PASS:"
 
-check "--filter fail --dry-run load exits 0"
-run --filter fail --dry-run load docker/docker.sh
+check "--filter fail load exits 0"
+run --filter fail load docker/docker.sh
 expect_exit 0
+
+check "--no-color load exits 0"
+run --no-color load docker/docker.sh
+expect_exit 0
+
+check "--no-color load produces no ANSI escape sequences"
+expect_no_ansi
+
+# Dry runs
+check "--dry-run load docker/docker.sh exits 0"
+run --dry-run load docker/docker.sh
+expect_exit 0
+
+check "--dry-run load output shows DRY marker"
+expect_output_has "DRY"
+
+check "--dry-run load output identifies the profile"
+expect_output_has "docker\|Profile\|Loading"
+
+check "--dry-run load docker (folder name) exits 0"
+run --dry-run load docker
+expect_exit 0
+
+run -r "${WORK_DIR}/load_dryrun_report.txt" --dry-run load docker/docker.sh
+
+check "-r --dry-run creates a report file after load"
+expect_file_exists "${WORK_DIR}/load_dryrun_report.txt"
+
+check "-r --dry-run load report file contains the Foundries header"
+expect_file_has "${WORK_DIR}/load_dryrun_report.txt" "Foundries Check Report"
 
 check "--no-color --dry-run load exits 0"
 run --no-color --dry-run load docker/docker.sh
@@ -658,6 +735,32 @@ expect_exit 0
 
 check "--no-color --dry-run load produces no ANSI escape sequences"
 expect_no_ansi
+
+# foundries/lmp-v97.sh — real run and dry run
+check "load foundries/lmp-v97.sh exits 0"
+run load foundries/lmp-v97.sh
+expect_exit 0
+
+check "load foundries/lmp-v97.sh output identifies the profile"
+expect_output_has "lmp\|Profile\|Loading"
+
+run -r "${WORK_DIR}/lmp_report.txt" load foundries/lmp-v97.sh
+
+check "-r creates a report file after load foundries/lmp-v97.sh"
+expect_file_exists "${WORK_DIR}/lmp_report.txt"
+
+check "-r lmp-v97 report file contains the Foundries header"
+expect_file_has "${WORK_DIR}/lmp_report.txt" "Foundries Check Report"
+
+check "-r lmp-v97 report file contains PASS summary line"
+expect_file_has "${WORK_DIR}/lmp_report.txt" "PASS:"
+
+check "--dry-run load foundries/lmp-v97.sh exits 0"
+run --dry-run load foundries/lmp-v97.sh
+expect_exit 0
+
+check "--dry-run load foundries/lmp-v97.sh output shows DRY marker"
+expect_output_has "DRY"
 
 # =============================================================================
 #  SECTION 12 — Missing / invalid arguments
@@ -777,6 +880,10 @@ if [ "${FAIL}" -eq 0 ]; then
     printf '\033[32mAll %d tests passed.\033[0m\n' "${PASS}"
     exit 0
 else
-    printf '\033[31m%d test(s) failed.  Re-run with -v for captured output.\033[0m\n' "${FAIL}"
+    if [ "${VERBOSE}" -eq 0 ]; then
+        printf '\033[31m%d test(s) failed.  Re-run with -v for captured output.\033[0m\n' "${FAIL}"
+    else
+        printf '\033[31m%d test(s) failed.\033[0m\n' "${FAIL}"
+    fi
     exit 1
 fi

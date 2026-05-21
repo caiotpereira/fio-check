@@ -856,7 +856,8 @@ _resolve_lib() {
 #   ./fio-check.sh --dry-run run-lib foundries/lib_fiovb.sh
 #   ./fio-check.sh --filter fail run-lib foundries/lib_aktualizr.sh
 run_lib() {
-    local lib_arg="${1:?run-lib: lib path required}"
+    [ -n "${1:-}" ] || { printf '%s\n' "run-lib: lib path required" >&2; exit 2; }
+    local lib_arg="$1"
     local fn_override="${2:-}"
     local lib_path
 
@@ -1048,7 +1049,8 @@ _resolve_profile() {
 
 #load_profile <relative_or_absolute_path>
 load_profile() {
-    local profile_arg="${1:?load_profile: profile path required}"
+    [ -n "${1:-}" ] || { printf '%s\n' "load_profile: profile path required" >&2; exit 2; }
+    local profile_arg="$1"
     local profile_path
     profile_path="$(_resolve_profile "${profile_arg}")"
 
@@ -1282,16 +1284,24 @@ main() {
             -v|--verbose)       VERBOSE=1 ;;
             -q|--quiet)         QUIET=1 ;;
             --no-color)         NO_COLOR=1 ;;
-            -r|--report)        REPORT_FILE="${2:?--report requires a filename}"; shift ;;
-            --profiles-dir)     FIO_TEST_PROFILES="${2:?--profiles-dir requires a path}"; shift ;;
-            --lib-dir)          FIO_TEST_LIB="${2:?--lib-dir requires a path}"; export FIO_TEST_LIB; shift ;;
+            -r|--report)
+                [ -n "${2:-}" ] || { printf '%s\n' "--report requires a filename" >&2; exit 2; }
+                REPORT_FILE="$2"; shift ;;
+            --profiles-dir)
+                [ -n "${2:-}" ] || { printf '%s\n' "--profiles-dir requires a path" >&2; exit 2; }
+                FIO_TEST_PROFILES="$2"; shift ;;
+            --lib-dir)
+                [ -n "${2:-}" ] || { printf '%s\n' "--lib-dir requires a path" >&2; exit 2; }
+                FIO_TEST_LIB="$2"; export FIO_TEST_LIB; shift ;;
             --filter)
-                FILTER="${2:?--filter requires a value (e.g. fail,warn)}"
+                [ -n "${2:-}" ] || { printf '%s\n' "--filter requires a value (e.g. fail,warn)" >&2; exit 2; }
+                FILTER="$2"
                 export FIO_TEST_FILTER="${FILTER}"
                 shift
                 ;;
             --fn)
-                LIB_FN="${2:?--fn requres a function name}"
+                [ -n "${2:-}" ] || { printf '%s\n' "--fn requires a function name" >&2; exit 2; }
+                LIB_FN="$2"
                 shift
                 ;;
             --dry-run)
