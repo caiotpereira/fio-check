@@ -12,10 +12,10 @@
 #                           registry — disabled by default for offline targets)
 #
 # Usage
-#   ./basename $0 load lmp-v97
-#   ./basename $0 --dry-run load lmp-v97
-#   ./basename $0 --filter fail load lmp-v97
-#   FIO_TEST_LMP_SECURE=1 ./basename $0 -r /tmp/docker_report.txt load lmp-v97
+#   ./basename $0 run-profile lmp-v97
+#   ./basename $0 --dry-run run-profile lmp-v97
+#   ./basename $0 --filter fail run-profile lmp-v97
+#   FIO_TEST_LMP_SECURE=1 ./basename $0 -r /tmp/docker_report.txt run-profile lmp-v97
 # =============================================================================
 
 . "${FIO_TEST_LIB}/foundries/lib_aktualizr.sh"
@@ -24,6 +24,7 @@
 . "${FIO_TEST_LIB}/foundries/lib_composectl.sh"
 . "${FIO_TEST_LIB}/foundries/lib_fiovb.sh"
 . "${FIO_TEST_LIB}/foundries/lib_lmp_device_register.sh"
+. "${FIO_TEST_LIB}/foundries/lib_ostree.sh"
 
 # ---------------------------------------------------------------------------
 # Hooks
@@ -70,3 +71,6 @@ fi
 
 print_section "Verify lmp-device-register"
 lib_lmp_device_register_all
+
+print_section "Verify OSTree"
+lib_ostree_all
