@@ -160,7 +160,7 @@ lib_docker_kconfig_required() {
 # ---------------------------------------------------------------------------
 lib_docker_cgroup_mount() {
     if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
-        _dry_run "lib_docker_cgroup_mount (dry-run: system probe skipped)"
+        print_dryrun "lib_docker_cgroup_mount (dry-run: system probe skipped)"
         return 0
     fi
 
@@ -216,6 +216,10 @@ lib_docker_cmds() {
 # Handles both v1 (docker-compose) and v2 (docker compose plugin).
 # ---------------------------------------------------------------------------
 lib_docker_compose_cmds() {
+    if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
+        print_dryrun "lib_docker_compose_cmds (dry-run: system probe skipped)"
+        return 0
+    fi
     log_info "Checking Docker Compose availability"
 
     # v2 plugin: docker compose (space, not dash)
@@ -276,7 +280,7 @@ lib_docker_daemon() {
 # ---------------------------------------------------------------------------
 lib_docker_compose_version() {
     if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
-        _dry_run "lib_docker_compose_version (dry-run: system probe skipped)"
+        print_dryrun "lib_docker_compose_version (dry-run: system probe skipped)"
         return 0
     fi
 
@@ -299,8 +303,8 @@ lib_docker_compose_version() {
 # ---------------------------------------------------------------------------
 lib_docker_version() {
     if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
-        _dry_run "docker version check"
-        _dry_run "docker info summary"
+        print_dryrun "docker version check"
+        print_dryrun "docker info summary"
     else
         if command -v docker >/dev/null 2>&1; then
             local cli_ver; cli_ver="$(docker version --format '{{.Client.Version}}' 2>/dev/null || true)"
@@ -322,7 +326,7 @@ lib_docker_version() {
 # ---------------------------------------------------------------------------
 lib_docker_socket(){
     if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
-        _dry_run "Docker socket presence and permissions check"
+        print_dryrun "Docker socket presence and permissions check"
     else
         log_info "Checking Docker socket"
         if [ -S /var/run/docker.sock ]; then
@@ -350,7 +354,7 @@ lib_docker_socket(){
 # ---------------------------------------------------------------------------
 lib_docker_smoke_test() {
     if [ "${FIOCHECK_DRY_RUN:-0}" -eq 1 ]; then
-        _dry_print "lib_docker_smoke_test (dry-run: system probe skipped)"
+        print_dryrun "lib_docker_smoke_test (dry-run: system probe skipped)"
         return 0
     fi
 
