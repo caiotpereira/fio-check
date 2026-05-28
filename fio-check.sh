@@ -1221,7 +1221,7 @@ $(_color_bold "USAGE")
 $(_color_bold "COMMANDS")
   list-profile             List all available profiles
   list-libs                List lib modules and their exported functions
-  load <profile>           Load and run a profile (.sh path or folder name)
+  run-profile <profile>    Load and run a profile (.sh path or folder name)
   run-lib <lib> [fn]       Run the <lib>_all function or a specific function fn (when provided)
   run-all                  Run every profile and print a combined summary
   run-all-libs             Run every lib's _all function and print a summary
@@ -1308,7 +1308,7 @@ main() {
                 DRY_RUN=1
                 export FIOCHECK_DRY_RUN=1
                 ;;
-            list-profiles|list-libs|load|run-lib|run-all|run-all-libs|check-deps|check-kconfig|check-cmd|report|help)
+            list-profiles|list-libs|run-profile|run-lib|run-all|run-all-libs|check-deps|check-kconfig|check-cmd|report|help)
                 cmd="$1"; shift; break ;;
             -h|--help)          usage; exit 0 ;;
             *)  print_fail "Unknown option: $1"; usage; exit 1 ;;
@@ -1319,7 +1319,7 @@ main() {
     case "${cmd}" in
         list-profiles) list_profiles ;;
         list-libs)     list_libs ;;
-        load)          load_profile "$@" ;;
+        run-profile)       load_profile "$@" ;;
         run-lib)       run_lib "$@";;
         run-all)       run_all ;;
         run-all-libs)  run_all_libs ;;
