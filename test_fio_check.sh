@@ -6,14 +6,18 @@
 #   cd /path/to/fio-check
 #   ./test_fio_check.sh       # normal run
 #   ./test_fio_check.sh -v    # verbose: show captured output on failure
+#   FIO_SHELL=bash ./test_fio_check.sh   # run fio-check.sh under a given shell
+#                                        # (default: its #! line)
 #
 # Exit: 0 = all tests passed, 1 = one or more failed
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FIO="${SCRIPT_DIR}/fio-check.sh"
+FIO_SHELL="${FIO_SHELL:-}"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
+ESC="$(printf '\033')"
 
 # =============================================================================
 #  Test counters and shared state
@@ -51,11 +55,11 @@ check() {
 # run [args...]
 #   Run fio-check.sh with the given arguments.
 #   Captures combined stdout+stderr into OUTPUT and saves the exit code.
+#   FIO_SHELL (e.g. "bash", "busybox sh") is word-split on purpose.
 run() {
-    set +e
-    OUTPUT=$("${FIO}" "$@" 2>&1)
+    # shellcheck disable=SC2086
+    OUTPUT=$(${FIO_SHELL} "${FIO}" "$@" 2>&1)
     EXIT_CODE=$?
-    set -e
 }
 
 # pass / fail <reason>
@@ -69,7 +73,7 @@ fail() {
     FAIL=$((FAIL + 1))
     printf '  \033[31m✗\033[0m %s\n    └─ %s\n' "${CURRENT_TEST}" "$1"
     if [ "${VERBOSE}" -eq 1 ]; then
-        printf '%s\n' "${OUTPUT}" | head -15 | sed 's/^/      /'
+        printf '%s\n' "${OUTPUT}" | head -n 15 | sed 's/^/      /'
     fi
 }
 
@@ -149,9 +153,9 @@ expect_file_has() {
 
 # expect_no_ansi
 #   Assert the captured output contains no ANSI escape sequences.
-#   cat -v makes the ESC byte visible as ^[ so grep -F can find it reliably.
+#   Matches the raw ESC byte (busybox on target images has no cat -v).
 expect_no_ansi() {
-    if printf '%s\n' "${OUTPUT}" | cat -v | grep -qF '^['; then
+    if printf '%s\n' "${OUTPUT}" | grep -qF "${ESC}"; then
         fail "ANSI escape sequences found in output"
     else
         pass

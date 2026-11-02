@@ -1,0 +1,47 @@
+# =============================================================================
+# GPLv3-free target emulation: a scratch image holding only a static busybox
+# built with the OE-core busybox configuration (optionally + meta-lmp
+# fragments). No bash, no GNU coreutils/grep/sed/awk/findutils — the same
+# userland a meta-lmp / meta-foundries image has under
+# IMAGE_INCOMPATIBLE_LICENSE = "GPL-3.0* LGPL-3.0* AGPL-3.0*".
+#
+# Build:  docker build -f Dockerfile.busybox --build-arg BUSYBOX_VARIANT=oe .
+# =============================================================================
+FROM alpine:3.22 AS build
+
+# Pinned to the OE-core busybox recipe (busybox_1.38.0.bb SRC_URI checksum)
+ARG BUSYBOX_VERSION=1.38.0
+ARG BUSYBOX_SHA256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
+ARG BUSYBOX_VARIANT=oe
+
+RUN apk add --no-cache build-base linux-headers perl wget
+
+WORKDIR /build
+RUN wget -q "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2" \
+ && echo "${BUSYBOX_SHA256}  busybox-${BUSYBOX_VERSION}.tar.bz2" | sha256sum -c - \
+ && tar xjf "busybox-${BUSYBOX_VERSION}.tar.bz2" \
+ && mv "busybox-${BUSYBOX_VERSION}" src
+
+COPY busybox/ /build/cfg/
+RUN cd src \
+ && sh /build/cfg/merge-config.sh /build/cfg "${BUSYBOX_VARIANT}" > .config \
+ && yes "" | make oldconfig > /dev/null \
+ && make -j"$(nproc)" busybox busybox.links > /dev/null \
+ && mkdir -p /rootfs/bin /rootfs/sbin /rootfs/usr/bin /rootfs/usr/sbin \
+            /rootfs/etc /rootfs/tmp /rootfs/root \
+ && cp busybox /rootfs/bin/busybox \
+ && while read -r link; do \
+        [ "${link}" = "/bin/busybox" ] || ln -s /bin/busybox "/rootfs${link}"; \
+    done < busybox.links \
+ && cp .config /rootfs/etc/busybox.config \
+ && chmod 1777 /rootfs/tmp \
+ && printf 'root:x:0:0:root:/root:/bin/sh\n' > /rootfs/etc/passwd \
+ && printf 'root:x:0:\n' > /rootfs/etc/group
+
+FROM scratch
+# Links are created from busybox.links as OE-core does (its config has no
+# --install applet)
+COPY --from=build /rootfs/ /
+ENV PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root
+WORKDIR /src
+CMD ["sh", "./test_fio_check.sh"]
