@@ -4,9 +4,9 @@
 |---|---|
 | **Document** | test_plan.md |
 | **Scripts** | test_fio_check.sh, tests/validate-profiles.sh, tests/run-docker-tests.sh |
-| **Tool under test** | fio-check.sh 0.2.0 |
+| **Tool under test** | fio-check.sh 0.2.1 |
 | **Date** | 2026-11-02 |
-| **Test cases** | 186 in test_fio_check.sh (226 executed: some run once per lib or profile), plus 14 profile combinations |
+| **Test cases** | 207 in test_fio_check.sh (247 executed: some run once per lib or profile), plus 14 profile combinations |
 
 ---
 
@@ -20,6 +20,8 @@ Verify that fio-check reports correctly. That means checking:
   failing what doesn't;
 - every profile passes on an image that matches its layer and fails, with
   the right requirement tag, on each injected fault;
+- fio-check runs standalone, and finds libs and profiles in added
+  directories in search-path order;
 - all of this holds under busybox ash (GPLv3-free images), dash and bash.
 
 The test object here is fio-check itself. In ISTQB terms, `test_fio_check.sh`
@@ -70,6 +72,7 @@ fixtures.
 | Probe libs `lib_probe.sh`, `lib_core.sh` | Sections 8 and 11 | Sections 8 and 11 |
 | Stub command `fiover` (prints `Fio tool version 29.7.2, build abc1234`) | Section 11 | Section 11 |
 | Demo profile tree with an expectation set | Section 9 | Section 9 |
+| Standalone copy of `fio-check.sh` (no `lib/`, no `profiles/`), and an external tree with a product profile, an expectation set and two overriding lib directories | Section 12 | Section 12 |
 
 ### Notation
 
@@ -90,7 +93,7 @@ fixtures.
 `srun <fixture> <set> <profile> [opts]` is `fio-check.sh --no-color --root
 <fixture> --kconfig <fixture>.kconfig --expect <set> [opts] run <profile>`.
 `crun <fn> [opts]` runs `core:<fn>` from the probe lib with the stub command
-on `PATH`.
+on `PATH`. `arun [args]` runs the standalone copy of `fio-check.sh`.
 
 ---
 
@@ -303,52 +306,78 @@ on `PATH`.
 | TC-11.11 | check_lib_dependency accepts names with and without lib prefix (--root) | `crun lib_core_lib_prefix --root "${FX}/os"` | `exit 0` |
 | TC-11.12 | --dry-run check_sysctl does not run sysctl | `crun lib_core_sysctl_dry --dry-run` | dry-run only |
 
-## Section 12 — Portability lint
+## Section 12 — Search paths and standalone use
 
 | ID | Test case | Command | Expected |
 |---|---|---|---|
-| TC-12.1 | no legacy head/tail -N (OE busybox rejects it) | `grep -rnE '(head\|tail) -[0-9]' <shell sources>` | no match outside comments |
-| TC-12.2 | no cat -v (not in OE busybox) | `grep -rnE 'cat -v' <shell sources>` | no match outside comments |
-| TC-12.3 | no bash [[ ]] tests | `grep -rnE '\[\[ ' <shell sources>` | no match outside comments |
-| TC-12.4 | no bash 'source' builtin | `grep -rnE '(^\|[;&\|[:space:]])source [^-]' <shell sources>` | no match outside comments |
-| TC-12.5 | no 'function' keyword | `grep -rnE '^[[:space:]]*function [a-z_]' <shell sources>` | no match outside comments |
-| TC-12.6 | no undefined _dry_print helper | `grep -rnE '_dry_print' <shell sources>` | no match outside comments |
-| TC-12.7 | no GNU-only sed -i / grep -P / sort -V | `grep -rnE 'sed -i\|grep -[a-zA-Z]*P\|sort -V' <shell sources>` | no match outside comments |
+| TC-12.1 | standalone: help exits 0 | `arun --no-color help` | `exit 0` |
+| TC-12.2 | standalone: list exits 0 | `arun --no-color list` | `exit 0` |
+| TC-12.3 | standalone: list reports the empty search paths | ↑ same run | `output: "No lib directory"` |
+| TC-12.4 | standalone: check cmd works without libs | `arun --no-color check cmd sh` | `exit 0` |
+| TC-12.5 | standalone: run <lib> fails and names the search paths | `arun --no-color run docker` | `output: "Searched libs in: *nothing"` |
+| TC-12.6 | standalone: run <lib> exits 1 | ↑ same run | `exit 1` |
+| TC-12.7 | standalone: run <profile file> reports a missing lib as FAIL | `arun --no-color run "${EXT}/profiles/product/smoke.sh"` | `output: "Lib not found: probe"` |
+| TC-12.8 | standalone: run <profile file> with a missing lib exits 1 | ↑ same run | `exit 1` |
+| TC-12.9 | standalone: --lib-dir supplies the libs a profile file needs | `arun --no-color --lib-dir "${LIBFX}" run "${EXT}/profiles/product/smoke.sh"` | `exit 0` |
+| TC-12.10 | --no-builtin ignores lib/ next to fio-check.sh | `fio-check.sh --no-color --no-builtin run docker` | `exit 1` |
+| TC-12.11 | --profiles-dir adds a profile directory; built-in libs stay available | `fio-check.sh --no-color --profiles-dir "${EXT}/profiles" --lib-dir "${LIBFX}" run product/smoke` | `exit 0` |
+| TC-12.12 | a profile from an added directory tags its results | ↑ same run | `output: "\[PROD-1\] Command exists: sh"` |
+| TC-12.13 | built-in profiles are still found with an added profile directory | `fio-check.sh --no-color --dry-run --profiles-dir "${EXT}/profiles" run meta-foundries/os-update` | `exit 0` |
+| TC-12.14 | FIOCHECK_PROFILE_PATH and FIOCHECK_LIB_PATH add directories | `fio-check.sh --no-color run product/smoke` | `exit 0` |
+| TC-12.15 | an expectation set in an added profile directory is found | `fio-check.sh --no-color --profiles-dir "${EXT}/profiles" --lib-dir "${LIBFX}" --expect broken run product/smoke` | `output: "Command missing: __no_such_cmd__"` |
+| TC-12.16 | an added lib directory overrides a built-in lib | `fio-check.sh --no-color --lib-dir "${EXT}/lib" run docker:cmds` | `output: "overridden lib_docker_cmds"` |
+| TC-12.17 | the first --lib-dir wins | `fio-check.sh --no-color --lib-dir "${EXT}/lib2" --lib-dir "${EXT}/lib" run docker:cmds` | `output: "second lib_docker_cmds"` |
+| TC-12.18 | list marks a lib hidden by an earlier directory | `fio-check.sh --no-color --lib-dir "${EXT}/lib" list` | `output: "overridden earlier in the path"` |
+| TC-12.19 | list shows the search paths | ↑ same run | `output: "Lib search path: *${EXT}/lib:"` |
+| TC-12.20 | a missing --lib-dir is reported and ignored | `fio-check.sh --no-color --lib-dir "${WORK_DIR}/__none__" check cmd sh` | `output: "not a directory"` |
+| TC-12.21 | a missing --lib-dir does not fail the run | ↑ same run | `exit 0` |
 
-## Section 13 — Missing / invalid arguments
+## Section 13 — Portability lint
 
 | ID | Test case | Command | Expected |
 |---|---|---|---|
-| TC-13.1 | --report with no filename exits non-0 | `fio-check.sh --report` | `exit 2` |
-| TC-13.2 | --filter with no value exits non-0 | `fio-check.sh --filter` | `exit 2` |
-| TC-13.3 | the removed --fn option is rejected | `fio-check.sh --fn x run docker` | `exit 1` |
-| TC-13.4 | --profiles-dir with no path exits non-0 | `fio-check.sh --profiles-dir` | `exit 2` |
-| TC-13.5 | --lib-dir with no path exits non-0 | `fio-check.sh --lib-dir` | `exit 2` |
-| TC-13.6 | run with no lib path exits non-0 | `fio-check.sh run` | `exit 2` |
-| TC-13.7 | run with no profile path exits non-0 | `fio-check.sh run` | `exit 2` |
+| TC-13.1 | no legacy head/tail -N (OE busybox rejects it) | `grep -rnE '(head\|tail) -[0-9]' <shell sources>` | no match outside comments |
+| TC-13.2 | no cat -v (not in OE busybox) | `grep -rnE 'cat -v' <shell sources>` | no match outside comments |
+| TC-13.3 | no bash [[ ]] tests | `grep -rnE '\[\[ ' <shell sources>` | no match outside comments |
+| TC-13.4 | no bash 'source' builtin | `grep -rnE '(^\|[;&\|[:space:]])source [^-]' <shell sources>` | no match outside comments |
+| TC-13.5 | no 'function' keyword | `grep -rnE '^[[:space:]]*function [a-z_]' <shell sources>` | no match outside comments |
+| TC-13.6 | no undefined _dry_print helper | `grep -rnE '_dry_print' <shell sources>` | no match outside comments |
+| TC-13.7 | no GNU-only sed -i / grep -P / sort -V | `grep -rnE 'sed -i\|grep -[a-zA-Z]*P\|sort -V' <shell sources>` | no match outside comments |
 
-## Section 14 — Option combinations
+## Section 14 — Missing / invalid arguments
 
 | ID | Test case | Command | Expected |
 |---|---|---|---|
-| TC-14.1 | --no-color --verbose check cmd sh exits 0 | `fio-check.sh --no-color --verbose check cmd sh` | `exit 0` |
-| TC-14.2 | --no-color --verbose output has no ANSI sequences | ↑ same run | no ANSI escapes |
-| TC-14.3 | --no-color --verbose output still shows VERB lines | ↑ same run | `output: "VERB"` |
-| TC-14.4 | --quiet --filter fail on missing command exits 1 | `fio-check.sh --quiet --filter fail check cmd __nonexistent_xyz_404__` | `exit 1` |
-| TC-14.5 | --dry-run --verbose check kconfig exits 0 | `fio-check.sh --dry-run --verbose check kconfig CONFIG_NET` | `exit 0` |
-| TC-14.6 | --dry-run --verbose output shows DRY marker | ↑ same run | `output: "DRY"` |
-| TC-14.7 | --dry-run --no-color list exits 0 | `fio-check.sh --dry-run --no-color list` | `exit 0` |
-| TC-14.8 | --dry-run --no-color output has no ANSI sequences | ↑ same run | no ANSI escapes |
-| TC-14.9 | --filter fail,warn check cmd sh exits 0 | `fio-check.sh --filter "fail,warn" check cmd sh` | `exit 0` |
-| TC-14.10 | --filter fail,warn hides OK results | ↑ same run | `absent: "\[ OK \]"` |
-| TC-14.11 | --filter fail,ok check cmd sh exits 0 | `fio-check.sh --filter "fail,ok" check cmd sh` | `exit 0` |
-| TC-14.12 | --filter fail,ok shows OK results | ↑ same run | `output: "OK"` |
-| TC-14.13 | -v is a short alias for --verbose | `fio-check.sh -v check cmd sh` | `exit 0` |
-| TC-14.14 | -v output shows VERB lines | ↑ same run | `output: "VERB"` |
-| TC-14.15 | -q is a short alias for --quiet | `fio-check.sh -q check cmd sh` | `exit 0` |
-| TC-14.16 | -q suppresses OK output | ↑ same run | `absent: "\[ OK \]"` |
-| TC-14.17 | -r is a short alias for --report | `fio-check.sh -r "${WORK_DIR}/short_alias_report.txt" --dry-run run lib_fioconfig.sh` | `exit 0` |
-| TC-14.18 | -r creates the report file | ↑ same run | `file: "${WORK_DIR}/short_alias_report.txt"` |
+| TC-14.1 | --report with no filename exits non-0 | `fio-check.sh --report` | `exit 2` |
+| TC-14.2 | --filter with no value exits non-0 | `fio-check.sh --filter` | `exit 2` |
+| TC-14.3 | the removed --fn option is rejected | `fio-check.sh --fn x run docker` | `exit 1` |
+| TC-14.4 | --profiles-dir with no path exits non-0 | `fio-check.sh --profiles-dir` | `exit 2` |
+| TC-14.5 | --lib-dir with no path exits non-0 | `fio-check.sh --lib-dir` | `exit 2` |
+| TC-14.6 | run with no lib path exits non-0 | `fio-check.sh run` | `exit 2` |
+| TC-14.7 | run with no profile path exits non-0 | `fio-check.sh run` | `exit 2` |
+
+## Section 15 — Option combinations
+
+| ID | Test case | Command | Expected |
+|---|---|---|---|
+| TC-15.1 | --no-color --verbose check cmd sh exits 0 | `fio-check.sh --no-color --verbose check cmd sh` | `exit 0` |
+| TC-15.2 | --no-color --verbose output has no ANSI sequences | ↑ same run | no ANSI escapes |
+| TC-15.3 | --no-color --verbose output still shows VERB lines | ↑ same run | `output: "VERB"` |
+| TC-15.4 | --quiet --filter fail on missing command exits 1 | `fio-check.sh --quiet --filter fail check cmd __nonexistent_xyz_404__` | `exit 1` |
+| TC-15.5 | --dry-run --verbose check kconfig exits 0 | `fio-check.sh --dry-run --verbose check kconfig CONFIG_NET` | `exit 0` |
+| TC-15.6 | --dry-run --verbose output shows DRY marker | ↑ same run | `output: "DRY"` |
+| TC-15.7 | --dry-run --no-color list exits 0 | `fio-check.sh --dry-run --no-color list` | `exit 0` |
+| TC-15.8 | --dry-run --no-color output has no ANSI sequences | ↑ same run | no ANSI escapes |
+| TC-15.9 | --filter fail,warn check cmd sh exits 0 | `fio-check.sh --filter "fail,warn" check cmd sh` | `exit 0` |
+| TC-15.10 | --filter fail,warn hides OK results | ↑ same run | `absent: "\[ OK \]"` |
+| TC-15.11 | --filter fail,ok check cmd sh exits 0 | `fio-check.sh --filter "fail,ok" check cmd sh` | `exit 0` |
+| TC-15.12 | --filter fail,ok shows OK results | ↑ same run | `output: "OK"` |
+| TC-15.13 | -v is a short alias for --verbose | `fio-check.sh -v check cmd sh` | `exit 0` |
+| TC-15.14 | -v output shows VERB lines | ↑ same run | `output: "VERB"` |
+| TC-15.15 | -q is a short alias for --quiet | `fio-check.sh -q check cmd sh` | `exit 0` |
+| TC-15.16 | -q suppresses OK output | ↑ same run | `absent: "\[ OK \]"` |
+| TC-15.17 | -r is a short alias for --report | `fio-check.sh -r "${WORK_DIR}/short_alias_report.txt" --dry-run run lib_fioconfig.sh` | `exit 0` |
+| TC-15.18 | -r creates the report file | ↑ same run | `file: "${WORK_DIR}/short_alias_report.txt"` |
 ## Section P — Profile matrix (tests/validate-profiles.sh)
 
 Every profile is checked against every expectation set and machine of its
@@ -356,7 +385,8 @@ layer. Each combination is its own fio-check process, run against a fresh
 fixture rootfs (the profile's `# Fixture :` header) with `--root`, and writes
 its own report. A failure prints the command that reproduces it alone. New
 expectation sets (e.g. `profiles/meta-lmp/expect/v98.sh`), machines and
-profiles join the matrix automatically.
+profiles join the matrix automatically; `--profiles-dir <dir>` adds the
+layers of another profile tree.
 
 **Expected:** every combination exits `0`.
 
