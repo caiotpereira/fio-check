@@ -22,7 +22,7 @@
 # =============================================================================
 #  Global Variables
 # =============================================================================
-SCRIPT_VERSION="0.1.0"
+SCRIPT_VERSION="0.2.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NO_COLOR=0          # disable colored output
 NO_WARNING=0        # --warn-as-fail: a warning counts as a failure
