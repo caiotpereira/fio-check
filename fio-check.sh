@@ -10,7 +10,8 @@
 # with only busybox applets (GPLv3-free images): no GNU-only options, no
 # legacy `head -N`, no `cat -v`.
 #
-# Usage:   ./fio-check.sh [OPTIONS] COMMAND [ARGS]   (see: ./fio-check.sh help)
+# Usage:   ./fio-check.sh list | run <target> | check <kind> <args> [OPTIONS]
+#          (see: ./fio-check.sh help)
 #
 # Exit codes:
 #   0  no check failed
@@ -28,9 +29,8 @@ NO_WARNING=0        # --warn-as-fail: a warning counts as a failure
 VERBOSE=0           # print the probe behind each check
 QUIET=0             # print failures and the summary only
 DRY_RUN=0           # list the checks without executing them
-LIB_FN=""           # --fn: function called by run-lib
 FILTER=""           # --filter: ok,fail,warn,skip,info
-DETAILED=0          # list-libs: also list functions
+DETAILED=0          # list -v: also list lib functions
 REPORT_FILE=""      # -r: plain-text report
 EXPECT=""           # --expect: expectation set (profiles/<layer>/expect/<name>.sh)
 MACHINE=""          # --machine: machine file (profiles/<layer>/machine/<name>.sh)
@@ -801,18 +801,23 @@ _find_libs() {
         | sed "s|^${FIO_TEST_LIB}/||"
 }
 
-# _list_lib_functions <path> — indented lib_* function names
+# _list_lib_functions <path> <name> — the lib's functions as run targets
+# (<name>:<function>)
 _list_lib_functions() {
+    local prefix="lib_$2_"
     grep -E '^(lib_[a-z0-9_]+)\(\)' "$1" 2>/dev/null \
         | sed 's/() *{.*//' \
         | while IFS= read -r fn; do
-            printf '      %s  %s\n' "$(_color_dim '·')" "$(_color_yellow "${fn}")"
+            case "${fn}" in
+                "${prefix}"*) printf '      %s  %s\n' "$(_color_dim '·')" "$(_color_yellow "$2:${fn#"${prefix}"}")" ;;
+                *)            printf '      %s  %s\n' "$(_color_dim '·')" "$(_color_yellow "$2:${fn}")" ;;
+            esac
         done
 }
 
 # list_libs — lib modules grouped by directory (functions with DETAILED=1)
 list_libs() {
-    print_section "Available Lib Modules ${FIO_TEST_LIB}"
+    print_section "Libs ${FIO_TEST_LIB}  (run <lib> or <lib>:<function>)"
     if [ ! -d "${FIO_TEST_LIB}" ]; then
         print_warn "Lib directory not found: ${FIO_TEST_LIB}"
         return 0
@@ -834,8 +839,9 @@ list_libs() {
             printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${group}")")"
             prev="${group}"
         fi
-        printf '    %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel}")"
-        [ "${DETAILED}" -eq 1 ] && _list_lib_functions "${FIO_TEST_LIB}/${rel}"
+        local name; name="$(basename "${rel}" .sh)"; name="${name#lib_}"
+        printf '    %s  %-26s %s\n' "$(_color_dim '▸')" "$(_color_yellow "${name}")" "$(_color_dim "${rel}")"
+        [ "${DETAILED}" -eq 1 ] && _list_lib_functions "${FIO_TEST_LIB}/${rel}" "${name}"
     done < "${tmp}"
     rm -f "${tmp}"
     printf '\n'
@@ -863,7 +869,7 @@ _list_data() {
 # list_profiles — profiles grouped by layer, with their expectation sets
 # and machine files
 list_profiles() {
-    print_section "Available Profiles ${FIO_TEST_PROFILES}"
+    print_section "Profiles ${FIO_TEST_PROFILES}  (run <layer>/<profile>)"
     local tmp; tmp="$(mktemp)"
     _find_profiles 2>/dev/null > "${tmp}" || true
     if [ ! -s "${tmp}" ]; then
@@ -882,7 +888,7 @@ list_profiles() {
             [ -n "${data}" ] && printf '    %s %s\n' "$(_color_dim 'machine:')" "${data}"
             prev="${group}"
         fi
-        printf '    %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel}")"
+        printf '    %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel%.sh}")"
     done < "${tmp}"
     rm -f "${tmp}"
     printf '\n'
@@ -909,11 +915,14 @@ _abs() {
 }
 
 # _resolve_lib <arg> — absolute lib path. Accepts a path, a path relative to
-# the lib dir, or a bare file name inside lib/components/.
+# the lib dir, a file name inside lib/components/, or a component name
+# ("docker" -> lib_docker.sh).
 _resolve_lib() {
     local arg="$1" c
-    for c in "${arg}" "${FIO_TEST_LIB}/${arg}" "${FIO_TEST_LIB}/components/${arg}" \
-             "${FIO_TEST_LIB}/components/${arg}.sh"; do
+    for c in "${arg}" "${FIO_TEST_LIB}/${arg}" "${FIO_TEST_LIB}/${arg}.sh" \
+             "${FIO_TEST_LIB}/lib_${arg}.sh" \
+             "${FIO_TEST_LIB}/components/${arg}" "${FIO_TEST_LIB}/components/${arg}.sh" \
+             "${FIO_TEST_LIB}/components/lib_${arg}.sh"; do
         [ -f "${c}" ] && { _abs "${c}"; return; }
     done
     return 1
@@ -926,7 +935,7 @@ _reset_counters() {
     _FIOCHECK_REQ=""
 }
 
-# _print_run_info — banner lines shared by run-lib and run-profile
+# _print_run_info — banner lines shared by lib and profile runs
 _print_run_info() {
     [ -n "${FILTER}" ] && print_info "Filter active: showing only [$(printf '%s' "${FILTER}" | tr 'a-z' 'A-Z')] results"
     [ "${DRY_RUN}" -eq 1 ] && print_info "Dry-run active: checks are listed, not executed"
@@ -952,20 +961,55 @@ _print_summary() {
     [ "${_TEST_FAIL}" -eq 0 ]
 }
 
-# _source_data <kind> <name> — source profiles/<layer>/<kind>/<name>.sh
-# (or a file path). kind: expect | machine
-_source_data() {
-    local kind="$1" name="$2" f=""
-    [ -n "${name}" ] || return 0
-    if [ -f "${name}" ]; then
-        f="${name}"
-    elif [ -n "${FIOCHECK_PROFILE_DIR}" ] && [ -f "${FIOCHECK_PROFILE_DIR}/${kind}/${name}.sh" ]; then
+# _find_data <kind> <name> — path of an expectation set or machine file.
+# <name>: a file path, <layer>/<name>, or a bare name looked up in the
+# profile's layer (profile runs) or in every layer (must be unique).
+_find_data() {
+    local kind="$1" name="$2" f hits="" n=0
+    if [ -f "${name}" ]; then printf '%s' "${name}"; return 0; fi
+    case "${name}" in
+        */*)
+            f="${FIO_TEST_PROFILES}/${name%%/*}/${kind}/${name#*/}.sh"
+            [ -f "${f}" ] && { printf '%s' "${f}"; return 0; }
+            return 1 ;;
+    esac
+    if [ -n "${FIOCHECK_PROFILE_DIR}" ]; then
         f="${FIOCHECK_PROFILE_DIR}/${kind}/${name}.sh"
+        [ -f "${f}" ] && { printf '%s' "${f}"; return 0; }
+        return 1
     fi
-    if [ -z "${f}" ]; then
-        print_fail "${kind} '${name}' not found${FIOCHECK_PROFILE_DIR:+ in ${FIOCHECK_PROFILE_DIR}/${kind}/}"
-        local avail; avail="$(_list_data "${FIOCHECK_PROFILE_DIR}/${kind}")"
-        [ -n "${avail}" ] && print_info "Available: ${avail}"
+    for f in "${FIO_TEST_PROFILES}"/*/"${kind}/${name}.sh"; do
+        [ -f "${f}" ] || continue
+        hits="${hits} ${f}"; n=$(( n + 1 ))
+    done
+    [ "${n}" -eq 1 ] && { printf '%s' "${hits# }"; return 0; }
+    [ "${n}" -gt 1 ] && return 2
+    return 1
+}
+
+# _source_data <kind> <name> — source an expectation set or machine file
+# kind: expect | machine
+_source_data() {
+    local kind="$1" name="$2" f rc
+    [ -n "${name}" ] || return 0
+    f="$(_find_data "${kind}" "${name}")"
+    rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        if [ "${rc}" -eq 2 ]; then
+            print_fail "${kind} '${name}' exists in several layers — use <layer>/${name}"
+        else
+            print_fail "${kind} '${name}' not found"
+        fi
+        local avail="" d l n
+        for d in "${FIO_TEST_PROFILES}"/*/"${kind}"; do
+            [ -d "${d}" ] || continue
+            l="$(basename "$(dirname "${d}")")"
+            [ -z "${FIOCHECK_PROFILE_DIR}" ] || [ "${FIOCHECK_PROFILE_DIR}" = "$(dirname "${d}")" ] || continue
+            for n in $(_list_data "${d}"); do
+                avail="${avail} ${l}/${n}"
+            done
+        done
+        [ -n "${avail# }" ] && print_info "Available: ${avail# }"
         return 1
     fi
     log_info "${kind}: $(_abs "${f}")"
@@ -973,21 +1017,13 @@ _source_data() {
     . "${f}"
 }
 
-# run_lib <lib> [fn] — source one lib and call fn (--fn > [fn] > <lib>_all)
+# run_lib <lib_path> <fn> — source one lib and call one of its functions
 run_lib() {
-    [ -n "${1:-}" ] || { printf '%s\n' "run-lib: lib path required" >&2; exit 2; }
-    local lib_path
-    if ! lib_path="$(_resolve_lib "$1")"; then
-        print_fail "Lib not found: $1"
-        print_info "Run '$(basename "$0") list-libs' to see available libs."
-        return 1
-    fi
-    local fn="${LIB_FN:-${2:-$(basename "${lib_path}" .sh)_all}}"
-
+    local lib_path="$1" fn="$2"
     _reset_counters
     _reset_lib_env
     FIOCHECK_PROFILE_DIR=""
-    print_section "Running Lib: $(basename "${lib_path}")"
+    print_section "Running Lib: $(basename "${lib_path}" .sh) → ${fn}"
     _print_run_info "${lib_path}"
     _source_data machine "${MACHINE}" || return 1
     _source_data expect "${EXPECT}" || return 1
@@ -997,8 +1033,8 @@ run_lib() {
     if command -v "${fn}" >/dev/null 2>&1; then
         "${fn}"
     else
-        log_warn "Function not found: ${fn} — lib sourced but nothing called"
-        log_info "Available functions in this lib:"
+        log_warn "Function not found: ${fn}"
+        log_info "Functions in $(basename "${lib_path}"):"
         local f tmp; tmp="$(mktemp)"
         grep -E '^lib_[a-z0-9_]+\(\)' "${lib_path}" 2>/dev/null | sed 's/() *{.*//' > "${tmp}" || true
         while IFS= read -r f; do
@@ -1006,64 +1042,53 @@ run_lib() {
         done < "${tmp}"
         rm -f "${tmp}"
     fi
-    LIB_FN=""
     _print_summary
 }
 
-# _summary_table <title> <tsv> — combined table for run-all / run-all-libs
-_summary_table() {
-    local title="$1" tsv="$2" w=48
-    print_section "$3 — Summary"
-    printf '  %-*s  %s  %s  %s  %s\n' "${w}" "${title}" \
-        "$(_color_green 'PASS')" "$(_color_red 'FAIL')" "$(_color_yellow 'WARN')" "$(_color_dim 'SKIP')"
-    printf '  %s\n' "$(_rule $(( w + 30 )))"
-    local tp=0 tf=0 tw=0 ts=0 rel p f wr s status tab
-    tab="$(printf '\t')"
-    while IFS="${tab}" read -r rel p f wr s; do
-        tp=$(( tp + p )); tf=$(( tf + f )); tw=$(( tw + wr )); ts=$(( ts + s ))
-        if [ "${f}" -gt 0 ]; then status="$(_color_red '✗ FAIL')"; else status="$(_color_green '✓ PASS')"; fi
-        printf '  %-*s  %s  p:%-4d f:%-4d w:%-4d s:%-4d\n' "${w}" "${rel%.sh}" "${status}" "${p}" "${f}" "${wr}" "${s}"
-    done < "${tsv}"
-    printf '  %s\n' "$(_rule $(( w + 30 )))"
-    printf '  %-*s          %s  %s  %s  %s\n\n' "${w}" "TOTAL" \
-        "$(_color_green "p:${tp}")" "$(_color_red "f:${tf}")" \
-        "$(_color_yellow "w:${tw}")" "$(_color_dim "s:${ts}")"
-}
-
-# _run_each <kind> <list_fn> <run_fn> — run every lib / profile
-_run_each() {
-    local kind="$1" list_fn="$2" run_fn="$3"
-    local list tsv; list="$(mktemp)"; tsv="$(mktemp)"
-    "${list_fn}" 2>/dev/null > "${list}" || true
-    if [ ! -s "${list}" ]; then
-        rm -f "${list}" "${tsv}"
-        print_warn "No ${kind}s found"
-        return 0
+# run_target <target> — run a profile, a lib, or one lib function
+#   meta-foundries/full-update   profile (path, <layer>/<name>, folder name)
+#   docker                       lib: lib_docker_all
+#   docker:daemon_config         one function: lib_docker_daemon_config
+# A name that is both a profile and a lib runs the profile.
+run_target() {
+    local target="${1:-}"
+    if [ -z "${target}" ]; then
+        printf '%s\n' "run: target required (a profile, a lib, or lib:function)" >&2
+        exit 2
     fi
-    local count; count="$(wc -l < "${list}" | tr -d ' ')"
-    local orig_report="${REPORT_FILE}" any_fail=0 rel safe
-    print_section "Run All — ${count} ${kind}(s)"
-    while IFS= read -r rel; do
-        print_section "▶ ${rel%.sh}"
-        if [ -n "${orig_report}" ]; then
-            safe="$(printf '%s' "${rel%.sh}" | tr '/' '_')"
-            REPORT_FILE="${orig_report%.txt}_${safe}.txt"
-        fi
-        "${run_fn}" "${rel}" 2>&1 || any_fail=1
-        printf '%s\t%d\t%d\t%d\t%d\n' "${rel}" "${_TEST_PASS}" "${_TEST_FAIL}" "${_TEST_WARN}" "${_TEST_SKIP}" >> "${tsv}"
-    done < "${list}"
-    REPORT_FILE="${orig_report}"
-    if [ "${kind}" = "profile" ]; then
-        _summary_table "Profile" "${tsv}" "Run All"
-    else
-        _summary_table "Lib Module" "${tsv}" "Run All Libs"
-    fi
-    rm -f "${list}" "${tsv}"
-    return "${any_fail}"
-}
 
-run_all_libs() { _run_each lib _find_libs run_lib; }
-run_all()      { _run_each profile _find_profiles load_profile; }
+    local lib fn path base
+    case "${target}" in
+        *:*)
+            lib="${target%%:*}"
+            fn="${target#*:}"
+            if ! path="$(_resolve_lib "${lib}")"; then
+                print_fail "Lib not found: ${lib}"
+                print_info "Run '$(basename "$0") list' to see the profiles and libs."
+                return 1
+            fi
+            base="$(basename "${path}" .sh)"
+            case "${fn}" in
+                lib_*) ;;
+                *)     fn="${base}_${fn}" ;;
+            esac
+            run_lib "${path}" "${fn}"
+            return
+            ;;
+    esac
+
+    if path="$(_resolve_profile "${target}")"; then
+        load_profile "${path}"
+        return
+    fi
+    if path="$(_resolve_lib "${target}")"; then
+        run_lib "${path}" "$(basename "${path}" .sh)_all"
+        return
+    fi
+    print_fail "Not a profile or lib: ${target}"
+    print_info "Run '$(basename "$0") list' to see the profiles and libs."
+    return 1
+}
 
 # _resolve_profile <arg> — absolute profile path. Accepts a path, a path
 # relative to the profiles dir (with or without .sh), or a folder name
@@ -1085,13 +1110,7 @@ _resolve_profile() {
 # so the precedence is environment > machine > expect > profile.
 # Then calls fiocheck_pre_hook, fiocheck_run, fiocheck_post_hook when defined.
 load_profile() {
-    [ -n "${1:-}" ] || { printf '%s\n' "run-profile: profile path required" >&2; exit 2; }
-    local path
-    if ! path="$(_resolve_profile "$1")"; then
-        print_fail "Profile not found: $1"
-        print_info "Run '$(basename "$0") list-profiles' to see available profiles."
-        return 1
-    fi
+    local path="$1"
 
     _PROFILE_LOADED="${path}"
     FIOCHECK_PROFILE_DIR="$(dirname "${path}")"
@@ -1152,54 +1171,56 @@ usage() {
 $(_color_bold "${tool}") ${SCRIPT_VERSION} — Foundries.io device image checker
 
 $(_color_bold "USAGE")
-  ${tool} [OPTIONS] COMMAND [ARGS]
+  ${tool} list [-v]
+  ${tool} run <target> [OPTIONS]
+  ${tool} check cmd|kconfig|lib|sysctl <args> [OPTIONS]
 
 $(_color_bold "COMMANDS")
-  list-profiles            List profiles with their expectation sets and machines
-  list-libs                List lib modules (-v: also their functions)
-  run-profile <profile>    Run a profile (path, <layer>/<name>, or folder name)
-  run-lib <lib> [fn]       Run <lib>_all, or fn, from one lib module
-  run-all                  Run every profile and print a combined summary
-  run-all-libs             Run every lib's _all function and print a summary
-  check-deps <lib...>      Check shared library dependencies
-  check-kconfig <SYM> [v]  Check a kernel CONFIG symbol (optional expected value)
-  check-cmd <cmd...>       Check that commands exist
+  list                     Profiles (with expectation sets and machines) and libs
+                           -v also lists every lib function
+  run <target>             Run one target:
+                             <layer>/<profile>     meta-foundries/full-update
+                             <lib>                 docker        (lib_docker_all)
+                             <lib>:<function>      docker:daemon (lib_docker_daemon)
+  check cmd <cmd...>       Commands exist
+  check kconfig <SYM> [v]  Kernel option is enabled (or has value v)
+  check lib <lib...>       Shared libraries are installed
+  check sysctl <key> <v>   Kernel parameter has value v
   help                     Show this help
 
-$(_color_bold "OPTIONS")
-  -v, --verbose            Show the probe behind each check
-  -q, --quiet              Show failures and the summary only
-  -r, --report <file>      Write a plain-text report (per profile in run-all)
-  --filter <types>         Show only these result types: ok,fail,warn,skip,info
-  --fn <function>          run-lib: call this function instead of _all
+$(_color_bold "OPTIONS")  (before or after the command)
   --expect <name|file>     Expectation set: profiles/<layer>/expect/<name>.sh
   --machine <name|file>    Machine file: profiles/<layer>/machine/<name>.sh
   --root <dir>             Check an unbooted rootfs (static checks only)
   --kconfig <file>         Kernel config to check (plain or .gz)
   --mode <dev|production>  Image mode for production-only checks (default: dev)
+  -r, --report <file>      Write a plain-text report
+  --filter <types>         Show only these result types: ok,fail,warn,skip,info
   --warn-as-fail           Count warnings as failures
   --dry-run                List the checks without executing them
+  -v, --verbose            Show the probe behind each check
+  -q, --quiet              Show failures and the summary only
   --no-color               Disable ANSI colors
   --profiles-dir <dir>     Override the profiles directory (default: ./profiles)
   --lib-dir <dir>          Override the lib directory (default: ./lib)
 
 $(_color_bold "EXAMPLES")
-  ${tool} list-profiles
-  ${tool} --expect blacksail --machine qemux86-64 run-profile meta-foundries/full-update
-  ${tool} --root ./rootfs --kconfig ./kernel.config run-profile meta-foundries/os-update
-  ${tool} --expect wrynose run-profile meta-lmp/lmp
-  ${tool} --fn lib_docker_daemon_config run-lib lib_docker.sh
-  ${tool} --filter fail,warn -r report.txt run-all
-  ${tool} check-kconfig CONFIG_OVERLAY_FS y
+  ${tool} list
+  ${tool} run meta-foundries/full-update --expect wrynose --machine uno-q
+  ${tool} run meta-foundries/os-update --root ./rootfs --kconfig ./kernel.config
+  ${tool} run meta-lmp/lmp --expect v97 -r report.txt
+  ${tool} run docker:daemon_config --expect blacksail
+  ${tool} check kconfig CONFIG_OVERLAY_FS y
 
 $(_color_bold "WRITING A PROFILE")
   Libs (lib/components/) are generic: each check reads its expectation from a
-  FIOCHECK_<COMPONENT>_<FIELD> variable. A profile sets defaults that the
-  environment, --machine and --expect can override, and puts its checks in
-  fiocheck_run. fiocheck_pre_hook and fiocheck_post_hook run around it.
+  FIOCHECK_<COMPONENT>_<FIELD> variable. A profile sets its defaults before
+  sourcing the libs; the environment, --machine and --expect override them.
+  Checks go in fiocheck_run; fiocheck_pre_hook and fiocheck_post_hook run
+  around it.
 
-    . "\${FIO_TEST_LIB}/components/lib_docker.sh"
     : "\${FIOCHECK_DOCKER_VERSION:=25.0.0}"
+    . "\${FIO_TEST_LIB}/components/lib_docker.sh"
     fiocheck_run() {
         fiocheck_req FR-02 "Container stack"
         lib_docker_all
@@ -1207,8 +1228,28 @@ $(_color_bold "WRITING A PROFILE")
 EOF
 }
 
+# check_cmd_kind <kind> <args...> — the `check` command
+check_kind() {
+    local kind="${1:-}"
+    [ $# -gt 0 ] && shift
+    case "${kind}" in
+        cmd)     [ $# -gt 0 ] || { printf '%s\n' "check cmd: command name required" >&2; exit 2; }
+                 check_cmds "$@" ;;
+        kconfig) [ $# -gt 0 ] || { printf '%s\n' "check kconfig: CONFIG symbol required" >&2; exit 2; }
+                 check_kconfig "$@" ;;
+        lib)     [ $# -gt 0 ] || { printf '%s\n' "check lib: library name required" >&2; exit 2; }
+                 check_lib_dependencies "$@" ;;
+        sysctl)  [ $# -gt 1 ] || { printf '%s\n' "check sysctl: <key> <value> required" >&2; exit 2; }
+                 check_sysctl "$@" ;;
+        *)       printf '%s\n' "check: kind must be cmd, kconfig, lib or sysctl" >&2; exit 2 ;;
+    esac
+}
+
 main() {
-    local cmd=""
+    local cmd="" nargs=0 a
+
+    # Options may appear anywhere; the first word is the command and the
+    # remaining words are its arguments (kept in order, NUL-free).
     while [ $# -gt 0 ]; do
         case "$1" in
             -v|--verbose)   VERBOSE=1; DETAILED=1 ;;
@@ -1216,14 +1257,14 @@ main() {
             --no-color)     NO_COLOR=1 ;;
             --warn-as-fail) NO_WARNING=1 ;;
             --dry-run)      DRY_RUN=1; FIOCHECK_DRY_RUN=1 ;;
-            -r|--report|--profiles-dir|--lib-dir|--filter|--fn|--expect|--machine|--root|--kconfig|--mode)
+            -h|--help)      usage; exit 0 ;;
+            -r|--report|--profiles-dir|--lib-dir|--filter|--expect|--machine|--root|--kconfig|--mode)
                 [ -n "${2:-}" ] || { printf '%s\n' "$1 requires a value" >&2; exit 2; }
                 case "$1" in
                     -r|--report)    REPORT_FILE="$2" ;;
                     --profiles-dir) FIO_TEST_PROFILES="$2" ;;
                     --lib-dir)      FIO_TEST_LIB="$2" ;;
                     --filter)       FILTER="$2"; FIO_TEST_FILTER="$2" ;;
-                    --fn)           LIB_FN="$2" ;;
                     --expect)       EXPECT="$2" ;;
                     --machine)      MACHINE="$2" ;;
                     --kconfig)      FIOCHECK_KCONFIG="$2" ;;
@@ -1236,28 +1277,35 @@ main() {
                         esac ;;
                 esac
                 shift ;;
-            list-profiles|list-libs|run-profile|run-lib|run-all|run-all-libs|check-deps|check-kconfig|check-cmd|help)
-                cmd="$1"; shift; break ;;
-            -h|--help)      usage; exit 0 ;;
-            *)              print_fail "Unknown option: $1"; usage; exit 1 ;;
+            -*)             print_fail "Unknown option: $1"; usage; exit 1 ;;
+            *)
+                if [ -z "${cmd}" ]; then
+                    cmd="$1"
+                else
+                    nargs=$(( nargs + 1 ))
+                    eval "_arg_${nargs}=\$1"
+                fi ;;
         esac
         shift
+    done
+
+    # Rebuild the positional arguments of the command
+    a=1
+    set --
+    while [ "${a}" -le "${nargs}" ]; do
+        eval "set -- \"\$@\" \"\${_arg_${a}}\""
+        a=$(( a + 1 ))
     done
 
     trap '[ -n "${_KCONFIG_TMP}" ] && rm -f "${_KCONFIG_TMP}"' EXIT
 
     case "${cmd}" in
-        list-profiles) list_profiles ;;
-        list-libs)     list_libs ;;
-        run-profile)   load_profile "$@" ;;
-        run-lib)       run_lib "$@" ;;
-        run-all)       run_all ;;
-        run-all-libs)  run_all_libs ;;
-        check-deps)    check_lib_dependencies "$@" ;;
-        check-kconfig) check_kconfig "$@" ;;
-        check-cmd)     check_cmds "$@" ;;
-        help|"")       usage ;;
-        *)             print_fail "Unknown command: ${cmd}"; usage; exit 1 ;;
+        list)      list_profiles; list_libs ;;
+        run)       [ $# -le 1 ] || { printf '%s\n' "run: one target at a time" >&2; exit 2; }
+                   run_target "${1:-}" ;;
+        check)     check_kind "$@" ;;
+        help|"")   usage ;;
+        *)         print_fail "Unknown command: ${cmd}"; usage; exit 1 ;;
     esac
 }
 

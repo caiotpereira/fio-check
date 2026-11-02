@@ -98,7 +98,7 @@ run_one() {
     local out="${work}/out_${tag}"
     # shellcheck disable=SC2086
     ${fio_shell} "${FIO}" --no-color -r "${report}" --root "${fx}" --kconfig "${fx}.kconfig" \
-        --expect "${expect}" ${mopt} run-profile "${layer}/${profile}" > "${out}" 2>&1
+        --expect "${expect}" ${mopt} run "${layer}/${profile}" > "${out}" 2>&1
     local rc=$?
     local counts; counts="$(grep -E 'PASS: [0-9]+' "${out}" | tail -n 1 | sed 's/^ *//')"
     if [ "${rc}" -eq 0 ]; then
@@ -107,7 +107,7 @@ run_one() {
         failed=$(( failed + 1 ))
         printf '%s\tFAIL\t%s\n' "${id}" "${counts:-exit ${rc}}" >> "${results}"
         printf '  reproduce: tests/fixtures/make-rootfs.sh /tmp/fx %s %s && \\\n' "${fixture}" "${hwid}" >> "${results}.repro"
-        printf '             ./fio-check.sh --root /tmp/fx --kconfig /tmp/fx.kconfig --expect %s %s run-profile %s/%s\n' \
+        printf '             ./fio-check.sh --root /tmp/fx --kconfig /tmp/fx.kconfig --expect %s %s run %s/%s\n' \
             "${expect}" "${mopt}" "${layer}" "${profile}" >> "${results}.repro"
         if [ "${verbose}" -eq 1 ]; then
             printf '\n--- %s\n' "${id}"
