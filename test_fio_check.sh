@@ -247,9 +247,9 @@ run --bad-flag
 expect_exit 1
 
 # =============================================================================
-#  SECTION 3 — list
+#  SECTION 3 — list — libs
 # =============================================================================
-section "list"
+section "list — libs"
 
 check "list exits 0"
 run list
@@ -297,9 +297,9 @@ run --lib-dir "/no_such_dir_xyz" list
 expect_exit 0
 
 # =============================================================================
-#  SECTION 4 — list
+#  SECTION 4 — list — profiles
 # =============================================================================
-section "list"
+section "list — profiles"
 
 check "list exits 0"
 run list
@@ -492,7 +492,7 @@ run --dry-run check lib ssl crypto
 expect_exit 0
 
 # =============================================================================
-#  SECTION 8 — run
+#  SECTION 8 — run <lib>
 # =============================================================================
 section "run <lib>"
 
@@ -589,9 +589,9 @@ for lib in "${SCRIPT_DIR}"/lib/components/lib_*.sh; do
 done
 
 # =============================================================================
-#  SECTION 11 — run
+#  SECTION 9 — run <profile>
 # =============================================================================
-section "run"
+section "run <profile>"
 
 # A fixture profile tree exercises the runner without host dependencies
 PROFX="${WORK_DIR}/profx"
@@ -672,7 +672,7 @@ run --dry-run --expect blacksail run meta-foundries/os-update
 expect_output_has "Expect: blacksail"
 
 # =============================================================================
-#  SECTION 12 — Static profile runs against fixture rootfs (--root)
+#  SECTION 10 — Static profiles (--root)
 #
 #  The same profiles a device runs, checked against generated rootfs trees:
 #  conforming images pass, every injected fault fails with its requirement tag.
@@ -813,7 +813,7 @@ run --mode staging run meta-foundries/os-update
 expect_exit 2
 
 # =============================================================================
-#  SECTION 13 — Core checks (live, with stub commands)
+#  SECTION 11 — Core checks
 # =============================================================================
 section "Core checks"
 
@@ -895,7 +895,7 @@ crun lib_core_sysctl_dry --dry-run
 expect_dry_only
 
 # =============================================================================
-#  SECTION 14 — Portability lint (GPLv3-free busybox targets)
+#  SECTION 12 — Portability lint
 # =============================================================================
 section "Portability lint"
 
@@ -924,7 +924,7 @@ lint "no GNU-only sed -i / grep -P / sort -V"         'sed -i|grep -[a-zA-Z]*P|s
 
 
 # =============================================================================
-#  SECTION 15 — Missing / invalid arguments
+#  SECTION 13 — Missing / invalid arguments
 # =============================================================================
 section "Missing / invalid arguments"
 
@@ -957,7 +957,7 @@ run run
 expect_exit 2
 
 # =============================================================================
-#  SECTION 16 — Option combinations
+#  SECTION 14 — Option combinations
 # =============================================================================
 section "Option combinations"
 
