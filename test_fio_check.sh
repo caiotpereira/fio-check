@@ -151,6 +151,32 @@ expect_file_has() {
     fi
 }
 
+# expect_no_shell_errors
+#   Assert the captured output holds no shell error (syntax, missing applet,
+#   unsupported option, non-integer test) from any of bash, dash, busybox.
+expect_no_shell_errors() {
+    local errs
+    errs="$(printf '%s\n' "${OUTPUT}" | grep -E 'line [0-9]+: |^[^ ]*\.sh: [0-9]+: |command not found|: not found$|Illegal number|integer expression|unrecognized option|invalid option|[Ss]yntax error|bad substitution|applet not found')"
+    if [ -z "${errs}" ]; then
+        pass
+    else
+        fail "shell error: $(printf '%s\n' "${errs}" | head -n 1)"
+    fi
+}
+
+# expect_dry_only
+#   Assert a --dry-run listed checks ([DRY ]) without logging an OK or FAIL
+#   result and without shell errors.
+expect_dry_only() {
+    if ! printf '%s\n' "${OUTPUT}" | grep -qF '[DRY ]'; then
+        fail "no [DRY ] lines in dry-run output"
+    elif printf '%s\n' "${OUTPUT}" | grep -qE '^ \[( OK |FAIL)\]'; then
+        fail "dry-run logged a result: $(printf '%s\n' "${OUTPUT}" | grep -E '^ \[( OK |FAIL)\]' | head -n 1)"
+    else
+        expect_no_shell_errors
+    fi
+}
+
 # expect_no_ansi
 #   Assert the captured output contains no ANSI escape sequences.
 #   Matches the raw ESC byte (busybox on target images has no cat -v).
@@ -232,8 +258,8 @@ expect_exit 0
 check "list-libs output shows lib_docker"
 expect_output_has "lib_docker"
 
-check "list-libs output shows foundries group"
-expect_output_has "foundries"
+check "list-libs output shows the components group"
+expect_output_has "components"
 
 # --verbose: list-libs does not call check_* functions so no VERB lines
 # are expected, but the flag must not cause a crash
@@ -280,14 +306,23 @@ run list-profiles
 expect_exit 0
 
 check "list-profiles output shows at least one profile"
-expect_output_has "docker\|foundries"
+expect_output_has "meta-foundries"
+
+check "list-profiles shows the meta-foundries and meta-lmp profiles"
+expect_output_has "meta-foundries/full-update.sh"
+
+check "list-profiles shows expectation sets and machine files per layer"
+expect_output_has "expect: .*blacksail"
+
+check "list-profiles does not list expectation files as profiles"
+expect_output_not_has "expect/blacksail.sh"
 
 check "list-profiles --profiles-dir <valid path> exits 0"
 run --profiles-dir "${SCRIPT_DIR}/profiles" list-profiles
 expect_exit 0
 
-check "list-profiles --profiles-dir <valid path> shows docker profile"
-expect_output_has "docker"
+check "list-profiles --profiles-dir <valid path> shows meta-lmp profile"
+expect_output_has "meta-lmp/lmp.sh"
 
 check "list-profiles --profiles-dir <empty dir> exits 0 with warning"
 run --profiles-dir "${WORK_DIR}" list-profiles
@@ -461,127 +496,81 @@ expect_exit 0
 # =============================================================================
 section "run-lib"
 
-# lib_aktualizr.sh has no lib_aktualizr_all function, so run_lib logs a
-# warning but exits 0 because no check recorded a FAIL
-check "run-lib foundries/lib_aktualizr.sh exits 0 (no _all function defined)"
-run run-lib foundries/lib_aktualizr.sh
+LIBFX="${WORK_DIR}/libfx"
+mkdir -p "${LIBFX}"
+cat > "${LIBFX}/lib_probe.sh" <<'EOF'
+lib_probe_ok() { check_cmd sh; }
+EOF
+
+check "run-lib <lib without _all> exits 0"
+run --lib-dir "${LIBFX}" run-lib lib_probe.sh
 expect_exit 0
 
-check "run-lib output warns about missing _all function"
-expect_output_has "not found\|WARN"
+check "run-lib <lib without _all> warns about the missing function"
+expect_output_has "Function not found: lib_probe_all"
 
 check "run-lib output shows Results section"
 expect_output_has "Results"
+
+check "--fn lib_probe_ok run-lib exits 0"
+run --lib-dir "${LIBFX}" --fn lib_probe_ok run-lib lib_probe.sh
+expect_exit 0
 
 check "run-lib <nonexistent file> exits 1"
 run run-lib __no_such_lib__.sh
 expect_exit 1
 
 check "run-lib <nonexistent file> output shows error message"
-expect_output_has "not found\|Lib not found"
+expect_output_has "Lib not found"
 
-check "--dry-run run-lib exits 0"
-run --dry-run run-lib foundries/lib_fioconfig.sh
+check "run-lib accepts a bare lib name from lib/components"
+run --dry-run run-lib lib_docker.sh
 expect_exit 0
 
-check "--dry-run run-lib output shows DRY"
-expect_output_has "DRY\|dry"
-
-# --fn: call a specific function instead of the derived _all name
-check "--fn lib_aktualizr_set_version run-lib exits 0"
-run --fn lib_aktualizr_set_version run-lib foundries/lib_aktualizr.sh
+check "run-lib accepts components/<lib>"
+run --dry-run run-lib components/lib_docker.sh
 expect_exit 0
 
-check "--fn run-lib output shows Results section"
-expect_output_has "Results"
-
-check "--dry-run --fn lib_aktualizr_cmd run-lib exits 0"
-run --dry-run --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh
-expect_exit 0
-
-check "--dry-run --fn lib_aktualizr_cmd output shows DRY"
-expect_output_has "DRY"
-
-# check_cmd() calls print_verbose before the existence test, so VERB appears
-# even when aktualizr-lite is not installed on the host
-check "--verbose --fn lib_aktualizr_cmd run-lib exits 0 or 1 (system-dependent)"
-run --verbose --fn lib_aktualizr_cmd run-lib foundries/lib_aktualizr.sh
-expect_exit_any 0 1
-
-check "--verbose --fn lib_aktualizr_cmd output shows VERB lines"
-expect_output_has "VERB"
-
-check "--filter fail --dry-run run-lib exits 0"
-run --filter fail --dry-run run-lib foundries/lib_fioconfig.sh
-expect_exit 0
-
-check "--filter fail --dry-run run-lib hides OK results"
-expect_output_not_has "\[ OK \]"
-
-check "--no-color --dry-run run-lib exits 0"
-run --no-color --dry-run run-lib foundries/lib_fioconfig.sh
-expect_exit 0
-
-check "--no-color --dry-run run-lib produces no ANSI escape sequences"
-expect_no_ansi
-
-check "--lib-dir override --dry-run run-lib exits 0"
-run --lib-dir "${SCRIPT_DIR}/lib" --dry-run run-lib foundries/lib_fioconfig.sh
-expect_exit 0
-
-# Report file generation
-run -r "${WORK_DIR}/run_lib_report.txt" \
-    --dry-run \
-    --fn lib_aktualizr_set_version \
-    run-lib foundries/lib_aktualizr.sh
-
+run -r "${WORK_DIR}/run_lib_report.txt" --dry-run run-lib lib_fioconfig.sh
 check "-r creates a report file after run-lib"
 expect_file_exists "${WORK_DIR}/run_lib_report.txt"
-
 check "-r report file contains the Foundries header"
 expect_file_has "${WORK_DIR}/run_lib_report.txt" "Foundries Check Report"
+check "-r report file contains the PASS/FAIL/WARN/SKIP line"
+expect_file_has "${WORK_DIR}/run_lib_report.txt" "PASS: .*WARN: "
 
-check "-r report file contains PASS summary line"
-expect_file_has "${WORK_DIR}/run_lib_report.txt" "PASS:"
+# Every lib: --dry-run lists its checks without executing or logging results,
+# and a live run raises no shell error in this shell.
+for lib in "${SCRIPT_DIR}"/lib/components/lib_*.sh; do
+    name="$(basename "${lib}")"
+
+    check "--dry-run run-lib ${name} exits 0"
+    run --dry-run run-lib "${name}"
+    expect_exit 0
+
+    check "--dry-run run-lib ${name} lists checks and logs no result"
+    expect_dry_only
+
+    check "run-lib ${name} raises no shell error"
+    run run-lib "${name}"
+    expect_no_shell_errors
+done
 
 # =============================================================================
 #  SECTION 9 — run-all-libs
 # =============================================================================
 section "run-all-libs"
 
-# Real runs — pass on a correctly provisioned device, may fail on dev hosts
-check "run-all-libs exits 0"
+check "run-all-libs exits 0 or 1 (host-dependent)"
 run run-all-libs
 expect_exit_any 0 1
 
 check "run-all-libs output shows summary header"
-expect_output_has "Run All Libs"
+expect_output_has "Run All Libs — Summary"
 
 check "run-all-libs output shows module count"
-expect_output_has "module"
+expect_output_has "lib(s)"
 
-check "--quiet run-all-libs exits 0"
-run --quiet run-all-libs
-expect_exit_any 0 1
-
-check "--filter fail run-all-libs exits 0"
-run --filter fail run-all-libs
-expect_exit_any 0 1
-
-check "--no-color run-all-libs exits 0"
-run --no-color run-all-libs
-expect_exit_any 0 1
-
-check "--no-color run-all-libs produces no ANSI escape sequences"
-expect_no_ansi
-
-check "-r run-all-libs exits 0"
-run -r "${WORK_DIR}/all_libs_report.txt" \
-    --fn lib_aktualizr_set_version \
-    run-all-libs
-expect_exit_any 0 1
-
-# Dry runs — all checks are skipped; exit must be 0 and DRY markers must appear
 check "--dry-run run-all-libs exits 0"
 run --dry-run run-all-libs
 expect_exit 0
@@ -589,185 +578,377 @@ expect_exit 0
 check "--dry-run run-all-libs output shows DRY marker"
 expect_output_has "DRY"
 
-check "--dry-run run-all-libs output shows summary header"
-expect_output_has "Run All Libs"
-
-check "--no-color --dry-run run-all-libs exits 0"
-run --no-color --dry-run run-all-libs
-expect_exit 0
-
 check "--no-color --dry-run run-all-libs produces no ANSI escape sequences"
+run --no-color --dry-run run-all-libs
 expect_no_ansi
 
-check "-r --dry-run run-all-libs exits 0"
-run -r "${WORK_DIR}/all_libs_dryrun_report.txt" \
-    --dry-run \
-    --fn lib_aktualizr_set_version \
-    run-all-libs
-expect_exit 0
+run -r "${WORK_DIR}/all_libs.txt" --dry-run run-all-libs
+check "-r run-all-libs writes one report per lib"
+expect_file_exists "${WORK_DIR}/all_libs_components_lib_docker.txt"
 
 # =============================================================================
 #  SECTION 10 — run-all
 # =============================================================================
 section "run-all"
 
-# Real runs — pass on a correctly provisioned device, may fail on dev hosts
-check "run-all exits 0"
+check "run-all exits 0 or 1 (host-dependent)"
 run run-all
 expect_exit_any 0 1
 
 check "run-all output shows summary header"
-expect_output_has "Run All"
+expect_output_has "Run All — Summary"
 
 check "run-all output shows profile count"
-expect_output_has "profile"
+expect_output_has "profile(s)"
 
-check "--quiet run-all exits 0"
-run --quiet run-all
-expect_exit_any 0 1
+check "run-all does not list expectation or machine files as profiles"
+expect_output_not_has "▶ meta-foundries/expect\|▶ meta-foundries/machine"
 
-check "--filter fail run-all exits 0"
-run --filter fail run-all
-expect_exit_any 0 1
-
-check "--no-color run-all exits 0"
-run --no-color run-all
-expect_exit_any 0 1
-
-check "--no-color run-all produces no ANSI escape sequences"
-expect_no_ansi
-
-check "--profiles-dir override run-all exits 0"
-run --profiles-dir "${SCRIPT_DIR}/profiles" run-all
-expect_exit_any 0 1
-
-# Dry runs
 check "--dry-run run-all exits 0"
 run --dry-run run-all
 expect_exit 0
 
-check "--dry-run run-all output shows DRY marker"
-expect_output_has "DRY"
-
-check "--dry-run run-all output shows summary header"
-expect_output_has "Run All"
-
-check "--no-color --dry-run run-all exits 0"
-run --no-color --dry-run run-all
-expect_exit 0
-
 check "--no-color --dry-run run-all produces no ANSI escape sequences"
+run --no-color --dry-run run-all
 expect_no_ansi
-
-check "--profiles-dir override --dry-run run-all exits 0"
-run --profiles-dir "${SCRIPT_DIR}/profiles" --dry-run run-all
-expect_exit 0
 
 # =============================================================================
 #  SECTION 11 — run-profile
 # =============================================================================
 section "run-profile"
 
-# Real runs — pass on a correctly provisioned device, may fail on dev hosts
-check "run-profile docker/docker.sh exits 0"
-run run-profile docker/docker.sh
-expect_exit_any 0 1
+# A fixture profile tree exercises the runner without host dependencies
+PROFX="${WORK_DIR}/profx"
+mkdir -p "${PROFX}/demo/expect"
+cat > "${PROFX}/demo/demo.sh" <<'EOF'
+: "${FIOCHECK_DEMO_CMD:=sh}"
+fiocheck_pre_hook()  { log_info "pre_hook: demo"; }
+fiocheck_run()       { fiocheck_req DEMO-1 "Demo"; check_cmd "${FIOCHECK_DEMO_CMD}"; }
+fiocheck_post_hook() { log_info "post_hook: demo"; }
+EOF
+printf ': "${FIOCHECK_DEMO_CMD:=__no_such_cmd__}"\n' > "${PROFX}/demo/expect/broken.sh"
+
+check "run-profile <fixture> exits 0"
+run --profiles-dir "${PROFX}" run-profile demo/demo.sh
+expect_exit 0
 
 check "run-profile output identifies the profile"
-expect_output_has "docker\|Profile\|Loading"
+expect_output_has "Loading Profile: demo"
 
-# Folder-name resolution: finds the first .sh inside profiles/docker/
-check "run-profile docker (folder name) exits 0"
-run run-profile docker
-expect_exit_any 0 1
+check "run-profile calls fiocheck_pre_hook"
+expect_output_has "pre_hook: demo"
+
+check "run-profile calls fiocheck_post_hook"
+expect_output_has "post_hook: demo"
+
+check "run-profile tags results with fiocheck_req"
+expect_output_has "\\[DEMO-1\\] Command exists: sh"
+
+check "an expectation set overrides the profile default"
+run --profiles-dir "${PROFX}" --expect broken run-profile demo/demo.sh
+expect_exit 1
+
+check "run-profile <folder name> resolves the profile"
+run --profiles-dir "${PROFX}" run-profile demo
+expect_exit 0
+
+check "run-profile <layer>/<name> without .sh resolves the profile"
+run --dry-run run-profile meta-foundries/os-update
+expect_exit 0
 
 check "run-profile <nonexistent profile> exits 1"
 run run-profile __no_such_profile_xyz__
 expect_exit 1
 
 check "run-profile <nonexistent profile> output shows error message"
-expect_output_has "not found\|Profile not found"
+expect_output_has "Profile not found"
 
-run -r "${WORK_DIR}/load_report.txt" run-profile docker/docker.sh
-
-check "-r creates a report file after run-profile"
-expect_file_exists "${WORK_DIR}/load_report.txt"
-
+run -r "${WORK_DIR}/load_report.txt" --profiles-dir "${PROFX}" run-profile demo
 check "-r run-profile report file contains the Foundries header"
 expect_file_has "${WORK_DIR}/load_report.txt" "Foundries Check Report"
+check "-r run-profile report file records the mode"
+expect_file_has "${WORK_DIR}/load_report.txt" "Mode      : dev"
+check "-r run-profile report file carries the requirement tag"
+expect_file_has "${WORK_DIR}/load_report.txt" "DEMO-1"
 
-check "-r run-profile report file contains PASS summary line"
-expect_file_has "${WORK_DIR}/load_report.txt" "PASS:"
+for p in meta-foundries/os-update meta-foundries/full-update meta-lmp/lmp; do
+    check "--dry-run run-profile ${p} exits 0"
+    run --dry-run run-profile "${p}"
+    expect_exit 0
 
-check "--filter fail run-profile exits 0"
-run --filter fail run-profile docker/docker.sh
-expect_exit_any 0 1
+    check "--dry-run run-profile ${p} lists checks and logs no result"
+    expect_dry_only
+done
 
-check "--no-color run-profile exits 0"
-run --no-color run-profile docker/docker.sh
-expect_exit_any 0 1
+check "--expect <unknown> exits 1"
+run --expect __nope__ run-profile meta-foundries/os-update
+expect_exit 1
 
-check "--no-color run-profile produces no ANSI escape sequences"
-expect_no_ansi
+check "--expect <unknown> lists the available sets"
+expect_output_has "Available: blacksail"
 
-# Dry runs
-check "--dry-run run-profile docker/docker.sh exits 0"
-run --dry-run run-profile docker/docker.sh
-expect_exit 0
+check "--machine <unknown> exits 1"
+run --machine __nope__ run-profile meta-foundries/os-update
+expect_exit 1
 
-check "--dry-run run-profile output shows DRY marker"
-expect_output_has "DRY"
-
-check "--dry-run run-profile output identifies the profile"
-expect_output_has "docker\|Profile\|Loading"
-
-check "--dry-run run-profile docker (folder name) exits 0"
-run --dry-run run-profile docker
-expect_exit 0
-
-run -r "${WORK_DIR}/load_dryrun_report.txt" --dry-run run-profile docker/docker.sh
-
-check "-r --dry-run creates a report file after run-profile"
-expect_file_exists "${WORK_DIR}/load_dryrun_report.txt"
-
-check "-r --dry-run run-profile report file contains the Foundries header"
-expect_file_has "${WORK_DIR}/load_dryrun_report.txt" "Foundries Check Report"
-
-check "--no-color --dry-run run-profile exits 0"
-run --no-color --dry-run run-profile docker/docker.sh
-expect_exit 0
-
-check "--no-color --dry-run run-profile produces no ANSI escape sequences"
-expect_no_ansi
-
-# foundries/lmp-v97.sh — real run and dry run
-check "run-profile foundries/lmp-v97.sh exits 0"
-run run-profile foundries/lmp-v97.sh
-expect_exit_any 0 1
-
-check "run-profile foundries/lmp-v97.sh output identifies the profile"
-expect_output_has "lmp\|Profile\|Loading"
-
-run -r "${WORK_DIR}/lmp_report.txt" run-profile foundries/lmp-v97.sh
-
-check "-r creates a report file after run-profile foundries/lmp-v97.sh"
-expect_file_exists "${WORK_DIR}/lmp_report.txt"
-
-check "-r lmp-v97 report file contains the Foundries header"
-expect_file_has "${WORK_DIR}/lmp_report.txt" "Foundries Check Report"
-
-check "-r lmp-v97 report file contains PASS summary line"
-expect_file_has "${WORK_DIR}/lmp_report.txt" "PASS:"
-
-check "--dry-run run-profile foundries/lmp-v97.sh exits 0"
-run --dry-run run-profile foundries/lmp-v97.sh
-expect_exit 0
-
-check "--dry-run run-profile foundries/lmp-v97.sh output shows DRY marker"
-expect_output_has "DRY"
+check "--expect <name> is reported in the run header"
+run --dry-run --expect blacksail run-profile meta-foundries/os-update
+expect_output_has "Expect: blacksail"
 
 # =============================================================================
-#  SECTION 12 — Missing / invalid arguments
+#  SECTION 12 — Static profile runs against fixture rootfs (--root)
+#
+#  The same profiles a device runs, checked against generated rootfs trees:
+#  conforming images pass, every injected fault fails with its requirement tag.
+# =============================================================================
+section "Static profiles (--root)"
+
+FX="${WORK_DIR}/fx"
+mkdir -p "${FX}"
+mkfx() { sh "${SCRIPT_DIR}/tests/fixtures/make-rootfs.sh" "$@" >/dev/null 2>&1; }
+
+# srun <fixture> <expect> <profile> [options...]
+srun() {
+    local fx="$1" ex="$2" pr="$3"
+    shift 3
+    run --no-color --root "${FX}/${fx}" --kconfig "${FX}/${fx}.kconfig" --expect "${ex}" "$@" run-profile "${pr}"
+}
+
+mkfx "${FX}/os"   foundries-os
+mkfx "${FX}/full" foundries-full
+mkfx "${FX}/lmp"  lmp
+mkfx "${FX}/prod" foundries-full qemux86-64 production
+
+check "fixture rootfs were generated"
+if [ -d "${FX}/os/usr/bin" ] && [ -d "${FX}/full/usr/bin" ] && [ -f "${FX}/lmp.kconfig" ]; then pass; else fail "make-rootfs.sh failed"; fi
+
+check "os-update passes on an OS Update rootfs"
+srun os blacksail meta-foundries/os-update --machine qemux86-64
+expect_exit 0
+
+check "os-update tags results with requirement IDs"
+expect_output_has "\[FR-08\]"
+
+check "--root mode skips runtime checks"
+expect_output_has "needs a running system"
+
+check "full-update passes on a Full Update rootfs"
+srun full blacksail meta-foundries/full-update --machine qemux86-64
+expect_exit 0
+
+check "full-update checks the daemon.json entries from the expectation set"
+expect_output_has "max-concurrent-downloads=3"
+
+check "os-update fails on a Full Update rootfs (FR-01)"
+srun full blacksail meta-foundries/os-update
+expect_exit 1
+
+check "os-update reports the container stack as FR-01"
+expect_output_has "\[FR-01\] Command must be absent: docker"
+
+check "meta-lmp/lmp passes on an LmP rootfs (expect wrynose)"
+srun lmp wrynose meta-lmp/lmp
+expect_exit 0
+
+check "meta-lmp/lmp passes on an LmP rootfs (expect v97)"
+srun lmp v97 meta-lmp/lmp
+expect_exit 0
+
+check "a machine file sets the hardware id: mismatch fails"
+srun os blacksail meta-foundries/os-update --machine uno-q
+expect_exit 1
+
+check "hardware id mismatch names both values"
+expect_output_has "Hardware ID: qemux86-64 — expected uno-q"
+
+check "the environment overrides the machine file"
+FIOCHECK_AKLITE_HARDWARE_ID=qemux86-64; export FIOCHECK_AKLITE_HARDWARE_ID
+srun os blacksail meta-foundries/os-update --machine uno-q
+unset FIOCHECK_AKLITE_HARDWARE_ID
+expect_exit 0
+
+check "a substitute SOTA_CLIENT is checked through the variable (FR-06)"
+FIOCHECK_SOTA_CLIENT=custom-sota-client; export FIOCHECK_SOTA_CLIENT
+srun os blacksail meta-foundries/os-update
+unset FIOCHECK_SOTA_CLIENT
+expect_output_has "Command missing: custom-sota-client"
+
+check "the legacy lmp-device-register name fails on meta-foundries (D-18)"
+cp -R "${FX}/os" "${FX}/legacy"; cp "${FX}/os.kconfig" "${FX}/legacy.kconfig"
+printf '#!/bin/sh\n' > "${FX}/legacy/usr/bin/lmp-device-register"
+srun legacy blacksail meta-foundries/os-update
+expect_output_has "Command must be absent: lmp-device-register"
+
+check "/var/sota with the wrong mode fails"
+cp -R "${FX}/os" "${FX}/mode"; cp "${FX}/os.kconfig" "${FX}/mode.kconfig"
+chmod 0755 "${FX}/mode/var/sota"
+srun mode blacksail meta-foundries/os-update
+expect_output_has "Mode: /var/sota = 755 — expected 700"
+
+check "a disabled unit fails where enabled is required"
+cp -R "${FX}/os" "${FX}/disabled"; cp "${FX}/os.kconfig" "${FX}/disabled.kconfig"
+rm -f "${FX}/disabled/etc/systemd/system/multi-user.target.wants/fioconfig.service"
+srun disabled blacksail meta-foundries/os-update
+expect_output_has "unit: fioconfig.service enable=disabled — expected enabled"
+
+check "a masked unit fails"
+cp -R "${FX}/os" "${FX}/masked"; cp "${FX}/os.kconfig" "${FX}/masked.kconfig"
+ln -sf /dev/null "${FX}/masked/etc/systemd/system/aktualizr-lite.service"
+srun masked blacksail meta-foundries/os-update
+expect_output_has "unit: aktualizr-lite.service is masked"
+
+check "a static unit is reported as static"
+expect_output_has "unit: ostree-remount.service enable=static"
+
+check "daemon.json drift fails"
+cp -R "${FX}/full" "${FX}/drift"; cp "${FX}/full.kconfig" "${FX}/drift.kconfig"
+printf '{\n  "storage-driver": "vfs",\n  "max-concurrent-downloads": 3\n}\n' \
+    > "${FX}/drift/usr/lib/docker/daemon.json"
+srun drift blacksail meta-foundries/full-update
+expect_output_has "expected storage-driver=overlay2"
+
+check "a disabled kernel option fails"
+grep -v '^CONFIG_VETH=' "${FX}/full.kconfig" > "${FX}/novet.kconfig"
+run --no-color --root "${FX}/full" --kconfig "${FX}/novet.kconfig" --expect blacksail run-profile meta-foundries/full-update
+expect_output_has "kconfig: CONFIG_VETH is not enabled"
+
+check "a missing kernel config is a warning, not a pass"
+run --no-color --root "${FX}/full" --expect blacksail run-profile meta-foundries/full-update
+expect_output_has "no kernel config found"
+
+check "a missing kernel config fails with --warn-as-fail"
+run --no-color --warn-as-fail --root "${FX}/full" --expect blacksail run-profile meta-foundries/full-update
+expect_exit 1
+
+check "--mode production fails on a development rootfs (SR-13)"
+srun full blacksail meta-foundries/full-update --mode production
+expect_output_has "\[SR-13\] Credentials: development user"
+
+check "--mode production passes on a production rootfs"
+srun prod blacksail meta-foundries/full-update --mode production
+expect_exit 0
+
+check "--root <nonexistent> exits 2"
+run --root "${WORK_DIR}/__none__" run-profile meta-foundries/os-update
+expect_exit 2
+
+check "--mode <invalid> exits 2"
+run --mode staging run-profile meta-foundries/os-update
+expect_exit 2
+
+# =============================================================================
+#  SECTION 13 — Core checks (live, with stub commands)
+# =============================================================================
+section "Core checks"
+
+STUB="${WORK_DIR}/stub"
+mkdir -p "${STUB}"
+printf '#!/bin/sh\necho "Fio tool version 29.7.2, build abc1234"\n' > "${STUB}/fiover"
+chmod 0755 "${STUB}/fiover"
+cat > "${LIBFX}/lib_core.sh" <<'EOF'
+lib_core_ver_ok()      { check_cmd_version fiover 20.0.0; }
+lib_core_ver_old()     { check_cmd_version fiover 99.0.0; }
+lib_core_ver_minor()   { check_cmd_version fiover 29.10.0; }
+lib_core_ver_exact()   { check_cmd_version fiover abc1234 --version '[0-9a-f]{7}' true; }
+lib_core_ver_report()  { check_cmd_version fiover ""; }
+lib_core_ver_missing() { check_cmd_version __no_such_cmd__ 1.0; }
+lib_core_cmp() {
+    _compare_versions 1.10 1.9;     [ $? -eq 1 ] && log_ok "cmp 1.10 > 1.9"     || log_fail "cmp 1.10 > 1.9"
+    _compare_versions 2.0-rc1 2.0;  [ $? -eq 0 ] && log_ok "cmp 2.0-rc1 = 2.0"  || log_fail "cmp 2.0-rc1 = 2.0"
+    _compare_versions 3 3.0.1;      [ $? -eq 2 ] && log_ok "cmp 3 < 3.0.1"      || log_fail "cmp 3 < 3.0.1"
+}
+lib_core_lib_missing() { check_lib_dependency zz_no_such_lib_xyz; }
+lib_core_lib_prefix()  { check_lib_dependency libostree-1; check_lib_dependency ostree-1; }
+lib_core_sysctl_dry()  { check_sysctl net.ipv4.ip_forward 1; }
+EOF
+
+# crun <fn> [options...] — call one lib_core function with the stubs on PATH
+crun() {
+    local fn="$1"
+    shift
+    local save="${PATH}"
+    PATH="${STUB}:${PATH}"; export PATH
+    run --no-color --lib-dir "${LIBFX}" --fn "${fn}" "$@" run-lib lib_core.sh
+    PATH="${save}"; export PATH
+}
+
+check "check_cmd_version passes a satisfied minimum"
+crun lib_core_ver_ok
+expect_exit 0
+
+check "check_cmd_version fails a version below the minimum"
+crun lib_core_ver_old
+expect_exit 1
+
+check "check_cmd_version compares segments numerically (29.7 < 29.10)"
+crun lib_core_ver_minor
+expect_exit 1
+
+check "check_cmd_version raises no shell error"
+expect_no_shell_errors
+
+check "check_cmd_version matches an exact commit"
+crun lib_core_ver_exact
+expect_exit 0
+
+check "check_cmd_version without expectation reports only"
+crun lib_core_ver_report
+expect_output_has "29.7.2 (not enforced)"
+
+check "check_cmd_version on a missing command fails cleanly"
+crun lib_core_ver_missing
+expect_output_has "command missing"
+
+check "check_cmd_version on a missing command raises no shell error"
+expect_no_shell_errors
+
+check "_compare_versions orders versions"
+crun lib_core_cmp
+expect_exit 0
+
+check "check_lib_dependency fails a missing library"
+crun lib_core_lib_missing
+expect_exit 1
+
+check "check_lib_dependency accepts names with and without lib prefix (--root)"
+crun lib_core_lib_prefix --root "${FX}/os"
+expect_exit 0
+
+check "--dry-run check_sysctl does not run sysctl"
+crun lib_core_sysctl_dry --dry-run
+expect_dry_only
+
+# =============================================================================
+#  SECTION 14 — Portability lint (GPLv3-free busybox targets)
+# =============================================================================
+section "Portability lint"
+
+LINT_FILES="${SCRIPT_DIR}/fio-check.sh ${SCRIPT_DIR}/lib ${SCRIPT_DIR}/profiles \
+${SCRIPT_DIR}/tools ${SCRIPT_DIR}/tests/fixtures"
+
+# lint <description> <ERE> — fail when any shell file matches
+lint() {
+    check "$1"
+    # shellcheck disable=SC2086
+    local hits; hits="$(grep -rnE "$2" ${LINT_FILES} 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#')"
+    if [ -z "${hits}" ]; then
+        pass
+    else
+        fail "$(printf '%s\n' "${hits}" | head -n 3 | tr '\n' ' ')"
+    fi
+}
+
+lint "no legacy head/tail -N (OE busybox rejects it)" '(head|tail) -[0-9]'
+lint "no cat -v (not in OE busybox)"                  'cat -v'
+lint "no bash [[ ]] tests"                            '\[\[ '
+lint "no bash 'source' builtin"                       '(^|[;&|[:space:]])source [^-]'
+lint "no 'function' keyword"                          '^[[:space:]]*function [a-z_]'
+lint "no undefined _dry_print helper"                 '_dry_print'
+lint "no GNU-only sed -i / grep -P / sort -V"         'sed -i|grep -[a-zA-Z]*P|sort -V'
+
+
+# =============================================================================
+#  SECTION 15 — Missing / invalid arguments
 # =============================================================================
 section "Missing / invalid arguments"
 
@@ -800,7 +981,7 @@ run run-profile
 expect_exit 2
 
 # =============================================================================
-#  SECTION 13 — Option combinations
+#  SECTION 16 — Option combinations
 # =============================================================================
 section "Option combinations"
 
@@ -867,130 +1048,11 @@ check "-q suppresses OK output"
 expect_output_not_has "\[ OK \]"
 
 check "-r is a short alias for --report"
-run -r "${WORK_DIR}/short_alias_report.txt" --dry-run run-lib foundries/lib_fioconfig.sh
+run -r "${WORK_DIR}/short_alias_report.txt" --dry-run run-lib lib_fioconfig.sh
 expect_exit 0
 
 check "-r creates the report file"
 expect_file_exists "${WORK_DIR}/short_alias_report.txt"
-
-# =============================================================================
-#  SECTION 14 — lib_ostree
-# =============================================================================
-section "lib_ostree"
-
-# --- dry-run: kconfig/cmd/lib checks print DRY markers; file/status checks
-#     detect FIOCHECK_DRY_RUN and return 0 without touching the filesystem.
-
-check "--dry-run run-lib foundries/lib_ostree.sh exits 0"
-run --dry-run run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run run-lib lib_ostree output shows DRY"
-expect_output_has "DRY"
-
-check "--dry-run run-lib lib_ostree shows Results section"
-expect_output_has "Results"
-
-# lib_ostree_kconfig — check_kconfig prints DRY in dry-run mode
-check "--dry-run --fn lib_ostree_kconfig exits 0"
-run --dry-run --fn lib_ostree_kconfig run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_kconfig output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_lib_check — check_lib_dependency prints DRY in dry-run mode
-check "--dry-run --fn lib_ostree_lib_check exits 0"
-run --dry-run --fn lib_ostree_lib_check run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_lib_check output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_cmd — check_cmd prints DRY in dry-run mode
-check "--dry-run --fn lib_ostree_cmd exits 0"
-run --dry-run --fn lib_ostree_cmd run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_cmd output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_sysroot_check — detects FIOCHECK_DRY_RUN; prints dryrun line and returns 0
-check "--dry-run --fn lib_ostree_sysroot_check exits 0"
-run --dry-run --fn lib_ostree_sysroot_check run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_sysroot_check output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_admin_status — detects FIOCHECK_DRY_RUN; prints dryrun line and returns 0
-check "--dry-run --fn lib_ostree_admin_status exits 0"
-run --dry-run --fn lib_ostree_admin_status run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_admin_status output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_service — check_systemd_service prints DRY in dry-run mode
-check "--dry-run --fn lib_ostree_service exits 0"
-run --dry-run --fn lib_ostree_service run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_service output shows DRY"
-expect_output_has "DRY"
-
-# lib_ostree_all in dry-run — full suite; all sub-functions exit 0
-check "--dry-run --fn lib_ostree_all exits 0"
-run --dry-run --fn lib_ostree_all run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--dry-run --fn lib_ostree_all output shows DRY"
-expect_output_has "DRY"
-
-# --- live kconfig check: check_kconfig always exits 0 (log_skip when no
-#     kernel config file is found on the host, y/m/n when one exists)
-check "live --fn lib_ostree_kconfig exits 0 (skip when no kernel config)"
-run --fn lib_ostree_kconfig run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "live --fn lib_ostree_kconfig output shows a kconfig or skip result"
-expect_output_has "kconfig:\|no kernel\|SKIP"
-
-# --- live sysroot/admin/service checks: warn-only or skip on non-LmP systems
-
-check "live --fn lib_ostree_sysroot_check exits 0 or 1 (warn-only on non-LmP)"
-run --fn lib_ostree_sysroot_check run-lib foundries/lib_ostree.sh
-expect_exit_any 0 1
-
-check "live --fn lib_ostree_admin_status exits 0 (skip when ostree absent)"
-run --fn lib_ostree_admin_status run-lib foundries/lib_ostree.sh
-expect_exit_any 0 1
-
-check "live --fn lib_ostree_service exits 0 or 1 (system-dependent)"
-run --fn lib_ostree_service run-lib foundries/lib_ostree.sh
-expect_exit_any 0 1
-
-# --- --filter + --no-color ---
-
-check "--filter fail --dry-run run-lib lib_ostree exits 0"
-run --filter fail --dry-run run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--filter fail --dry-run run-lib lib_ostree hides OK results"
-expect_output_not_has "\[ OK \]"
-
-check "--no-color --dry-run run-lib lib_ostree exits 0"
-run --no-color --dry-run run-lib foundries/lib_ostree.sh
-expect_exit 0
-
-check "--no-color --dry-run run-lib lib_ostree produces no ANSI escape sequences"
-expect_no_ansi
-
-# --- list-libs shows the new module ---
-
-check "list-libs output shows lib_ostree"
-run list-libs
-expect_output_has "lib_ostree"
 
 # =============================================================================
 #  Summary
