@@ -5,9 +5,42 @@ All notable changes to fio-check are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html); before 1.0, a minor
 version may change the command line.
 
+## 0.2.1 — 2026-11-02
+
+fio-check runs without its libraries or profiles, and finds them in added
+directories.
+
+### Added
+
+- Search paths for libs and profiles, first match wins: `--lib-dir` /
+  `--profiles-dir` in the order given, then `FIOCHECK_LIB_PATH` /
+  `FIOCHECK_PROFILE_PATH` (colon-separated), then `lib/` and `profiles/` next
+  to `fio-check.sh`. An added directory can override a built-in lib.
+- `--no-builtin`: ignore the `lib/` and `profiles/` next to `fio-check.sh`.
+- `fiocheck_use <lib...>`: profiles load libs by name from the lib search
+  path, so a profile kept outside this repository can use the built-in libs.
+  A lib that is not found is reported as a FAIL.
+- `list` prints both search paths, groups libs and profiles by directory, and
+  marks a lib hidden by one of the same name earlier in the path.
+- `--expect` / `--machine` with `<layer>/<name>` search every profile
+  directory.
+- `tests/validate-profiles.sh --profiles-dir <dir>` adds another profile tree
+  to the matrix; `--lib-dir <dir>` passes extra libs. Each combination now
+  runs its profile by file path.
+- Tests: standalone use and search paths (21 cases).
+
+### Changed
+
+- `--lib-dir` and `--profiles-dir` add a directory instead of replacing the
+  built-in one, and can be given more than once. A missing directory is
+  reported and ignored. Use `--no-builtin` for the 0.2.0 behavior.
+- `fio-check.sh` alone: `list` reports that no libs or profiles are
+  installed, and `run` names the directories it searched.
+- The built-in profiles load their libs with `fiocheck_use`.
+
 ## 0.2.0 — 2026-11-02
 
-Commits `0bfb001`..`3827d07` on top of 0.1.0.
+Commits `0bfb001`..`06f9037` on top of 0.1.0.
 
 Reorganizes fio-check to validate images built with both meta-lmp and
 meta-foundries, and makes it run unchanged on GPLv3-free images (busybox only).
