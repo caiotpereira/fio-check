@@ -1,6 +1,7 @@
 #!/bin/sh
 # =============================================================================
-# tests/run-docker-tests.sh — run test_fio_check.sh across target shells
+# tests/run-docker-tests.sh — run the test suite and the profile validation
+# matrix (tests/validate-profiles.sh) across target shells
 #
 # Usage:
 #   tests/run-docker-tests.sh [-v] [target ...]
@@ -48,9 +49,9 @@ run_target() {
         bash)                   tag="debian"; harness="bash"; fio_shell="bash" ;;
         dash)                   tag="debian"; harness="dash"; fio_shell="dash" ;;
     esac
-    # shellcheck disable=SC2086
     docker run --rm -v "${ROOT}:/src:ro" -e FIO_SHELL="${fio_shell}" \
-        "${IMAGE}:${tag}" "${harness}" ./test_fio_check.sh ${TEST_ARGS}
+        "${IMAGE}:${tag}" "${harness}" -c \
+        "${harness} ./test_fio_check.sh ${TEST_ARGS} && ${harness} tests/validate-profiles.sh --shell ${fio_shell}"
 }
 
 results=""
