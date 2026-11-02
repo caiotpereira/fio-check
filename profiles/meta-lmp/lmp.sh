@@ -27,11 +27,8 @@
 : "${FIOCHECK_DEV_USERS:=fio}"
 : "${FIOCHECK_FIOVB:=auto}"
 
-for _lib in aktualizr fioconfig device_register ostree docker composectl network \
-            compose_apps_early_start fio_docker_fsck auto_hostname fio_diag fiovb system; do
-    . "${FIO_TEST_LIB}/components/lib_${_lib}.sh"
-done
-unset _lib
+fiocheck_use aktualizr fioconfig device_register ostree docker composectl network \
+             compose_apps_early_start fio_docker_fsck auto_hostname fio_diag fiovb system
 
 fiocheck_run() {
     fiocheck_req aktualizr-lite "OTA client"

@@ -35,8 +35,18 @@ REPORT_FILE=""      # -r: plain-text report
 EXPECT=""           # --expect: expectation set (profiles/<layer>/expect/<name>.sh)
 MACHINE=""          # --machine: machine file (profiles/<layer>/machine/<name>.sh)
 
-export FIO_TEST_LIB="${SCRIPT_DIR}/lib"
-export FIO_TEST_PROFILES="${SCRIPT_DIR}/profiles"
+NO_BUILTIN=0        # --no-builtin: ignore lib/ and profiles/ next to the script
+_CLI_LIB_DIRS=""     # --lib-dir values, in order (colon-separated)
+_CLI_PROFILE_DIRS="" # --profiles-dir values, in order (colon-separated)
+_LIB_DIRS=""         # resolved lib search path (colon-separated, absolute)
+_PROFILE_DIRS=""     # resolved profile search path (colon-separated, absolute)
+
+: "${FIOCHECK_LIB_PATH:=}"      # extra lib directories (colon-separated)
+: "${FIOCHECK_PROFILE_PATH:=}"  # extra profile directories (colon-separated)
+# First lib / profile directory of the search path, kept for profiles that
+# source libs by path (set by _build_search_paths)
+export FIO_TEST_LIB=""
+export FIO_TEST_PROFILES=""
 export FIO_TEST_FILTER=""
 export FIOCHECK_DRY_RUN=0
 export FIOCHECK_ROOT=""          # --root: check an unbooted rootfs (static checks only)
@@ -786,19 +796,84 @@ check_unit_active() {
 }
 
 # =============================================================================
+#  Search paths
+#
+#  Libs and profiles are looked up in an ordered list of directories:
+#    1. --lib-dir / --profiles-dir, in the order given (repeatable)
+#    2. FIOCHECK_LIB_PATH / FIOCHECK_PROFILE_PATH (colon-separated)
+#    3. lib/ and profiles/ next to fio-check.sh (skipped with --no-builtin)
+#  The first match wins, so an added directory can override a built-in lib
+#  or profile. With no directory at all, check and help still work and run
+#  accepts a profile file path.
+# =============================================================================
+
+# _lines <colon list> — one entry per line
+_lines() { printf '%s\n' "$1" | tr ':' '\n' | sed '/^$/d'; }
+
+# _path_add <list> <dir> — <list> with <dir> appended (absolute, unique);
+# a missing <dir> is left out
+_path_add() {
+    local list="$1" dir="$2"
+    if [ ! -d "${dir}" ]; then
+        printf '%s' "${list}"
+        return
+    fi
+    dir="$(cd "${dir}" && pwd)"
+    case ":${list}:" in
+        *":${dir}:"*) printf '%s' "${list}" ;;
+        *)            printf '%s' "${list:+${list}:}${dir}" ;;
+    esac
+}
+
+# _build_search_paths — set _LIB_DIRS and _PROFILE_DIRS
+_build_search_paths() {
+    local d
+    _LIB_DIRS=""
+    _PROFILE_DIRS=""
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        _LIB_DIRS="$(_path_add "${_LIB_DIRS}" "${d}")"
+    done <<EOF
+$(_lines "${_CLI_LIB_DIRS}:${FIOCHECK_LIB_PATH}")
+EOF
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        _PROFILE_DIRS="$(_path_add "${_PROFILE_DIRS}" "${d}")"
+    done <<EOF
+$(_lines "${_CLI_PROFILE_DIRS}:${FIOCHECK_PROFILE_PATH}")
+EOF
+    if [ "${NO_BUILTIN}" -eq 0 ]; then
+        _LIB_DIRS="$(_path_add "${_LIB_DIRS}" "${SCRIPT_DIR}/lib")"
+        _PROFILE_DIRS="$(_path_add "${_PROFILE_DIRS}" "${SCRIPT_DIR}/profiles")"
+    fi
+    FIO_TEST_LIB="${_LIB_DIRS%%:*}"
+    FIO_TEST_PROFILES="${_PROFILE_DIRS%%:*}"
+}
+
+# fiocheck_use <lib...> — source libs by name from the lib search path, e.g.
+#   fiocheck_use aktualizr fioconfig docker
+# A lib that is not found is a FAIL; the others are still loaded.
+fiocheck_use() {
+    local _fu_rc=0 _fu_lib _fu_path
+    for _fu_lib in "$@"; do
+        if _fu_path="$(_resolve_lib "${_fu_lib}")"; then
+            # shellcheck disable=SC1090
+            . "${_fu_path}"
+        else
+            log_fail "Lib not found: ${_fu_lib} (lib search path: ${_LIB_DIRS:-empty})"
+            _fu_rc=1
+        fi
+    done
+    return "${_fu_rc}"
+}
+
+# =============================================================================
 #  Lib and profile discovery
 # =============================================================================
 
-# _find_libs — relative paths of every lib file, top level first
-_find_libs() {
-    if [ ! -d "${FIO_TEST_LIB}" ]; then
-        print_fail "Lib directory not found: ${FIO_TEST_LIB}"
-        return 1
-    fi
-    find "${FIO_TEST_LIB}" -mindepth 1 -maxdepth 1 -type f -name "*.sh" | sort \
-        | sed "s|^${FIO_TEST_LIB}/||"
-    find "${FIO_TEST_LIB}" -mindepth 2 -maxdepth 5 -type f -name "*.sh" | sort \
-        | sed "s|^${FIO_TEST_LIB}/||"
+# _libs_in <dir> — lib files under <dir>, relative to it
+_libs_in() {
+    find "$1" -mindepth 1 -maxdepth 5 -type f -name 'lib_*.sh' 2>/dev/null | sort | sed "s|^$1/||"
 }
 
 # _list_lib_functions <path> <name> — the lib's functions as run targets
@@ -815,48 +890,48 @@ _list_lib_functions() {
         done
 }
 
-# list_libs — lib modules grouped by directory (functions with DETAILED=1)
+# list_libs — libs of every search-path directory (functions with -v).
+# A lib hidden by one of the same name earlier in the path is marked.
 list_libs() {
-    print_section "Libs ${FIO_TEST_LIB}  (run <lib> or <lib>:<function>)"
-    if [ ! -d "${FIO_TEST_LIB}" ]; then
-        print_warn "Lib directory not found: ${FIO_TEST_LIB}"
+    print_section "Libs  (run <lib> or <lib>:<function>)"
+    if [ -z "${_LIB_DIRS}" ]; then
+        print_info "No lib directory — add one with --lib-dir or FIOCHECK_LIB_PATH"
         return 0
     fi
-    local tmp; tmp="$(mktemp)"
-    _find_libs 2>/dev/null > "${tmp}" || true
-    if [ ! -s "${tmp}" ]; then
-        rm -f "${tmp}"
-        print_warn "No lib modules found in: ${FIO_TEST_LIB}"
-        return 0
-    fi
-    local prev="" group rel
-    while IFS= read -r rel; do
-        case "${rel}" in
-            */*) group="$(printf '%s' "${rel}" | cut -d/ -f1)" ;;
-            *)   group="lib" ;;
-        esac
-        if [ "${group}" != "${prev}" ]; then
-            printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${group}")")"
-            prev="${group}"
-        fi
-        local name; name="$(basename "${rel}" .sh)"; name="${name#lib_}"
-        printf '    %s  %-26s %s\n' "$(_color_dim '▸')" "$(_color_yellow "${name}")" "$(_color_dim "${rel}")"
-        [ "${DETAILED}" -eq 1 ] && _list_lib_functions "${FIO_TEST_LIB}/${rel}" "${name}"
-    done < "${tmp}"
-    rm -f "${tmp}"
+    local d rel name n seen=" "
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${d}")")"
+        n=0
+        while IFS= read -r rel; do
+            [ -n "${rel}" ] || continue
+            n=$(( n + 1 ))
+            name="$(basename "${rel}" .sh)"; name="${name#lib_}"
+            case "${seen}" in
+                *" ${name} "*)
+                    printf '    %s  %-26s %s\n' "$(_color_dim '▸')" "$(_color_dim "${name}")" \
+                        "$(_color_dim "${rel} (overridden earlier in the path)")"
+                    continue ;;
+            esac
+            seen="${seen}${name} "
+            printf '    %s  %-26s %s\n' "$(_color_dim '▸')" "$(_color_yellow "${name}")" "$(_color_dim "${rel}")"
+            [ "${DETAILED}" -eq 1 ] && _list_lib_functions "${d}/${rel}" "${name}"
+        done <<EOF
+$(_libs_in "${d}")
+EOF
+        [ "${n}" -eq 0 ] && print_warn "No lib modules found in: ${d}"
+    done <<EOF
+$(_lines "${_LIB_DIRS}")
+EOF
     printf '\n'
 }
 
-# _find_profiles — relative paths of every runnable profile.
+# _profiles_in <dir> — runnable profiles under <dir>, relative to it.
 # expect/ and machine/ hold data, and files named _*.sh are fragments.
-_find_profiles() {
-    if [ ! -d "${FIO_TEST_PROFILES}" ]; then
-        print_fail "Profiles directory not found: ${FIO_TEST_PROFILES}"
-        return 1
-    fi
-    find "${FIO_TEST_PROFILES}" -mindepth 2 -maxdepth 5 -type f -name "*.sh" \
-        ! -path "*/expect/*" ! -path "*/machine/*" ! -name "_*" \
-        | sort | sed "s|^${FIO_TEST_PROFILES}/||"
+_profiles_in() {
+    find "$1" -mindepth 2 -maxdepth 5 -type f -name "*.sh" \
+        ! -path "*/expect/*" ! -path "*/machine/*" ! -name "_*" 2>/dev/null \
+        | sort | sed "s|^$1/||"
 }
 
 # _list_data <dir> — names of the .sh files in <dir>, space separated
@@ -866,31 +941,40 @@ _list_data() {
         | sed -e 's|.*/||' -e 's|\.sh$||' | tr '\n' ' '
 }
 
-# list_profiles — profiles grouped by layer, with their expectation sets
-# and machine files
+# list_profiles — profiles of every search-path directory, grouped by layer,
+# with each layer's expectation sets and machine files
 list_profiles() {
-    print_section "Profiles ${FIO_TEST_PROFILES}  (run <layer>/<profile>)"
-    local tmp; tmp="$(mktemp)"
-    _find_profiles 2>/dev/null > "${tmp}" || true
-    if [ ! -s "${tmp}" ]; then
-        rm -f "${tmp}"
-        print_warn "No profiles found in: ${FIO_TEST_PROFILES}"
+    print_section "Profiles  (run <layer>/<profile>)"
+    if [ -z "${_PROFILE_DIRS}" ]; then
+        print_info "No profile directory — add one with --profiles-dir or FIOCHECK_PROFILE_PATH"
         return 0
     fi
-    local prev="" group rel data
-    while IFS= read -r rel; do
-        group="$(printf '%s' "${rel}" | cut -d/ -f1)"
-        if [ "${group}" != "${prev}" ]; then
-            printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${group}")")"
-            data="$(_list_data "${FIO_TEST_PROFILES}/${group}/expect")"
-            [ -n "${data}" ] && printf '    %s %s\n' "$(_color_dim 'expect: ')" "${data}"
-            data="$(_list_data "${FIO_TEST_PROFILES}/${group}/machine")"
-            [ -n "${data}" ] && printf '    %s %s\n' "$(_color_dim 'machine:')" "${data}"
-            prev="${group}"
-        fi
-        printf '    %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel%.sh}")"
-    done < "${tmp}"
-    rm -f "${tmp}"
+    local d rel group prev data n
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        printf '\n  %s\n' "$(_color_bold "$(_color_cyan "${d}")")"
+        prev=""
+        n=0
+        while IFS= read -r rel; do
+            [ -n "${rel}" ] || continue
+            n=$(( n + 1 ))
+            group="$(printf '%s' "${rel}" | cut -d/ -f1)"
+            if [ "${group}" != "${prev}" ]; then
+                printf '    %s\n' "$(_color_bold "${group}")"
+                data="$(_list_data "${d}/${group}/expect")"
+                [ -n "${data}" ] && printf '      %s %s\n' "$(_color_dim 'expect: ')" "${data}"
+                data="$(_list_data "${d}/${group}/machine")"
+                [ -n "${data}" ] && printf '      %s %s\n' "$(_color_dim 'machine:')" "${data}"
+                prev="${group}"
+            fi
+            printf '      %s  %s\n' "$(_color_dim '▸')" "$(_color_yellow "${rel%.sh}")"
+        done <<EOF
+$(_profiles_in "${d}")
+EOF
+        [ "${n}" -eq 0 ] && print_warn "No profiles found in: ${d}"
+    done <<EOF
+$(_lines "${_PROFILE_DIRS}")
+EOF
     printf '\n'
 }
 
@@ -914,17 +998,23 @@ _abs() {
     printf '%s/%s' "${dir}" "$(basename "$1")"
 }
 
-# _resolve_lib <arg> — absolute lib path. Accepts a path, a path relative to
-# the lib dir, a file name inside lib/components/, or a component name
-# ("docker" -> lib_docker.sh).
+# _resolve_lib <arg> — absolute lib path. <arg>: a file path, a path relative
+# to a lib directory, or a component name ("docker" -> lib_docker.sh), looked
+# up in each directory of the lib search path in order.
 _resolve_lib() {
-    local arg="$1" c
-    for c in "${arg}" "${FIO_TEST_LIB}/${arg}" "${FIO_TEST_LIB}/${arg}.sh" \
-             "${FIO_TEST_LIB}/lib_${arg}.sh" \
-             "${FIO_TEST_LIB}/components/${arg}" "${FIO_TEST_LIB}/components/${arg}.sh" \
-             "${FIO_TEST_LIB}/components/lib_${arg}.sh"; do
-        [ -f "${c}" ] && { _abs "${c}"; return; }
-    done
+    local arg="$1" d c n
+    [ -f "${arg}" ] && { _abs "${arg}"; return 0; }
+    n="${arg%.sh}"; n="${n##*/}"; n="${n#lib_}"
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        for c in "${d}/${arg}" "${d}/${arg}.sh" "${d}/lib_${n}.sh" "${d}/components/lib_${n}.sh"; do
+            [ -f "${c}" ] && { _abs "${c}"; return 0; }
+        done
+        c="$(find "${d}" -maxdepth 4 -type f -name "lib_${n}.sh" 2>/dev/null | sort | head -n 1)"
+        [ -n "${c}" ] && { _abs "${c}"; return 0; }
+    done <<EOF
+$(_lines "${_LIB_DIRS}")
+EOF
     return 1
 }
 
@@ -962,15 +1052,22 @@ _print_summary() {
 }
 
 # _find_data <kind> <name> — path of an expectation set or machine file.
-# <name>: a file path, <layer>/<name>, or a bare name looked up in the
-# profile's layer (profile runs) or in every layer (must be unique).
+# <name>: a file path, <layer>/<name> (first match in the profile search
+# path), or a bare name looked up in the profile's layer (profile runs) or in
+# every layer of the path (lib runs; must be unique).
+# Returns 1 when not found, 2 when a bare name is ambiguous.
 _find_data() {
-    local kind="$1" name="$2" f hits="" n=0
+    local kind="$1" name="$2" d f hits="" n=0
     if [ -f "${name}" ]; then printf '%s' "${name}"; return 0; fi
     case "${name}" in
         */*)
-            f="${FIO_TEST_PROFILES}/${name%%/*}/${kind}/${name#*/}.sh"
-            [ -f "${f}" ] && { printf '%s' "${f}"; return 0; }
+            while IFS= read -r d; do
+                [ -n "${d}" ] || continue
+                f="${d}/${name%%/*}/${kind}/${name#*/}.sh"
+                [ -f "${f}" ] && { printf '%s' "${f}"; return 0; }
+            done <<EOF
+$(_lines "${_PROFILE_DIRS}")
+EOF
             return 1 ;;
     esac
     if [ -n "${FIOCHECK_PROFILE_DIR}" ]; then
@@ -978,11 +1075,16 @@ _find_data() {
         [ -f "${f}" ] && { printf '%s' "${f}"; return 0; }
         return 1
     fi
-    for f in "${FIO_TEST_PROFILES}"/*/"${kind}/${name}.sh"; do
-        [ -f "${f}" ] || continue
-        hits="${hits} ${f}"; n=$(( n + 1 ))
-    done
-    [ "${n}" -eq 1 ] && { printf '%s' "${hits# }"; return 0; }
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        for f in "${d}"/*/"${kind}/${name}.sh"; do
+            [ -f "${f}" ] || continue
+            hits="${f}"; n=$(( n + 1 ))
+        done
+    done <<EOF
+$(_lines "${_PROFILE_DIRS}")
+EOF
+    [ "${n}" -eq 1 ] && { printf '%s' "${hits}"; return 0; }
     [ "${n}" -gt 1 ] && return 2
     return 1
 }
@@ -1000,15 +1102,20 @@ _source_data() {
         else
             print_fail "${kind} '${name}' not found"
         fi
-        local avail="" d l n
-        for d in "${FIO_TEST_PROFILES}"/*/"${kind}"; do
-            [ -d "${d}" ] || continue
-            l="$(basename "$(dirname "${d}")")"
-            [ -z "${FIOCHECK_PROFILE_DIR}" ] || [ "${FIOCHECK_PROFILE_DIR}" = "$(dirname "${d}")" ] || continue
-            for n in $(_list_data "${d}"); do
-                avail="${avail} ${l}/${n}"
+        local avail="" pd d l n
+        while IFS= read -r pd; do
+            [ -n "${pd}" ] || continue
+            for d in "${pd}"/*/"${kind}"; do
+                [ -d "${d}" ] || continue
+                l="$(basename "$(dirname "${d}")")"
+                [ -z "${FIOCHECK_PROFILE_DIR}" ] || [ "${FIOCHECK_PROFILE_DIR}" = "$(dirname "${d}")" ] || continue
+                for n in $(_list_data "${d}"); do
+                    case " ${avail} " in *" ${l}/${n} "*) ;; *) avail="${avail} ${l}/${n}" ;; esac
+                done
             done
-        done
+        done <<EOF
+$(_lines "${_PROFILE_DIRS}")
+EOF
         [ -n "${avail# }" ] && print_info "Available: ${avail# }"
         return 1
     fi
@@ -1086,22 +1193,31 @@ run_target() {
         return
     fi
     print_fail "Not a profile or lib: ${target}"
+    print_info "Searched profiles in: ${_PROFILE_DIRS:-nothing}"
+    print_info "Searched libs in:     ${_LIB_DIRS:-nothing}"
     print_info "Run '$(basename "$0") list' to see the profiles and libs."
     return 1
 }
 
-# _resolve_profile <arg> — absolute profile path. Accepts a path, a path
-# relative to the profiles dir (with or without .sh), or a folder name
-# (its first profile).
+# _resolve_profile <arg> — absolute profile path. <arg>: a file path, a path
+# relative to a profile directory (with or without .sh), or a folder name
+# (its first profile), looked up in each directory of the search path.
 _resolve_profile() {
-    local arg="$1" c
-    for c in "${arg}" "${FIO_TEST_PROFILES}/${arg}" "${FIO_TEST_PROFILES}/${arg}.sh"; do
-        [ -f "${c}" ] && { _abs "${c}"; return; }
-    done
-    [ -d "${FIO_TEST_PROFILES}/${arg}" ] || return 1
-    c="$(find "${FIO_TEST_PROFILES}/${arg}" -maxdepth 1 -type f -name "*.sh" ! -name "_*" \
-        | sort | head -n 1)"
-    [ -n "${c}" ] && _abs "${c}"
+    local arg="$1" d c
+    [ -f "${arg}" ] && { _abs "${arg}"; return 0; }
+    while IFS= read -r d; do
+        [ -n "${d}" ] || continue
+        for c in "${d}/${arg}" "${d}/${arg}.sh"; do
+            [ -f "${c}" ] && { _abs "${c}"; return 0; }
+        done
+        if [ -d "${d}/${arg}" ]; then
+            c="$(find "${d}/${arg}" -maxdepth 1 -type f -name "*.sh" ! -name "_*" | sort | head -n 1)"
+            [ -n "${c}" ] && { _abs "${c}"; return 0; }
+        fi
+    done <<EOF
+$(_lines "${_PROFILE_DIRS}")
+EOF
+    return 1
 }
 
 # load_profile <profile>
@@ -1201,8 +1317,16 @@ $(_color_bold "OPTIONS")  (before or after the command)
   -v, --verbose            Show the probe behind each check
   -q, --quiet              Show failures and the summary only
   --no-color               Disable ANSI colors
-  --profiles-dir <dir>     Override the profiles directory (default: ./profiles)
-  --lib-dir <dir>          Override the lib directory (default: ./lib)
+  --profiles-dir <dir>     Also look for profiles in <dir> (repeatable; searched first)
+  --lib-dir <dir>          Also look for libs in <dir> (repeatable; searched first)
+  --no-builtin             Ignore the lib/ and profiles/ next to fio-check.sh
+
+$(_color_bold "SEARCH PATHS")
+  Libs and profiles are looked up, first match wins, in: --lib-dir /
+  --profiles-dir (in order), then FIOCHECK_LIB_PATH / FIOCHECK_PROFILE_PATH
+  (colon-separated), then lib/ and profiles/ next to fio-check.sh. Without
+  any of them fio-check still runs: check and help need no lib, and run
+  accepts a profile file path.
 
 $(_color_bold "EXAMPLES")
   ${tool} list
@@ -1220,7 +1344,7 @@ $(_color_bold "WRITING A PROFILE")
   around it.
 
     : "\${FIOCHECK_DOCKER_VERSION:=25.0.0}"
-    . "\${FIO_TEST_LIB}/components/lib_docker.sh"
+    fiocheck_use docker
     fiocheck_run() {
         fiocheck_req FR-02 "Container stack"
         lib_docker_all
@@ -1257,13 +1381,19 @@ main() {
             --no-color)     NO_COLOR=1 ;;
             --warn-as-fail) NO_WARNING=1 ;;
             --dry-run)      DRY_RUN=1; FIOCHECK_DRY_RUN=1 ;;
+            --no-builtin)   NO_BUILTIN=1 ;;
             -h|--help)      usage; exit 0 ;;
             -r|--report|--profiles-dir|--lib-dir|--filter|--expect|--machine|--root|--kconfig|--mode)
                 [ -n "${2:-}" ] || { printf '%s\n' "$1 requires a value" >&2; exit 2; }
                 case "$1" in
                     -r|--report)    REPORT_FILE="$2" ;;
-                    --profiles-dir) FIO_TEST_PROFILES="$2" ;;
-                    --lib-dir)      FIO_TEST_LIB="$2" ;;
+                    --profiles-dir|--lib-dir)
+                        [ -d "$2" ] || print_warn "$1: not a directory: $2 (ignored)"
+                        if [ "$1" = "--lib-dir" ]; then
+                            _CLI_LIB_DIRS="${_CLI_LIB_DIRS:+${_CLI_LIB_DIRS}:}$2"
+                        else
+                            _CLI_PROFILE_DIRS="${_CLI_PROFILE_DIRS:+${_CLI_PROFILE_DIRS}:}$2"
+                        fi ;;
                     --filter)       FILTER="$2"; FIO_TEST_FILTER="$2" ;;
                     --expect)       EXPECT="$2" ;;
                     --machine)      MACHINE="$2" ;;
@@ -1298,9 +1428,12 @@ main() {
     done
 
     trap '[ -n "${_KCONFIG_TMP}" ] && rm -f "${_KCONFIG_TMP}"' EXIT
+    _build_search_paths
 
     case "${cmd}" in
-        list)      list_profiles; list_libs ;;
+        list)      print_info "Profile search path: ${_PROFILE_DIRS:-empty}"
+                   print_info "Lib search path:     ${_LIB_DIRS:-empty}"
+                   list_profiles; list_libs ;;
         run)       [ $# -le 1 ] || { printf '%s\n' "run: one target at a time" >&2; exit 2; }
                    run_target "${1:-}" ;;
         check)     check_kind "$@" ;;

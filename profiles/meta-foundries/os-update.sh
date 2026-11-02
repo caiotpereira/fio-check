@@ -29,13 +29,7 @@
 : "${FIOCHECK_OS_RELEASE:=LMP_FACTORY_TAG}"
 : "${FIOCHECK_DEV_USERS:=foundries fio}"
 
-. "${FIO_TEST_LIB}/components/lib_aktualizr.sh"
-. "${FIO_TEST_LIB}/components/lib_fioconfig.sh"
-. "${FIO_TEST_LIB}/components/lib_device_register.sh"
-. "${FIO_TEST_LIB}/components/lib_ostree.sh"
-. "${FIO_TEST_LIB}/components/lib_network.sh"
-. "${FIO_TEST_LIB}/components/lib_fio_diag.sh"
-. "${FIO_TEST_LIB}/components/lib_system.sh"
+fiocheck_use aktualizr fioconfig device_register ostree network fio_diag system
 
 # The container stack an OS Update image must not carry (FR-01)
 _OS_UPDATE_ABSENT="docker dockerd containerd composectl aklite-apps fioup"

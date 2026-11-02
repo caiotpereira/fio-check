@@ -61,8 +61,34 @@ Options can come before or after the command:
 | `--warn-as-fail` | A warning counts as a failure |
 | `--dry-run` | List the checks without executing them |
 | `-v`, `-q`, `--no-color` | Verbose, quiet, plain output |
+| `--lib-dir <dir>`, `--profiles-dir <dir>` | Also look for libs or profiles in `<dir>` (repeatable, searched first) |
+| `--no-builtin` | Ignore the `lib/` and `profiles/` next to `fio-check.sh` |
 
 Exit status: `0` no check failed, `1` at least one check failed, `2` usage error.
+
+## Search paths and standalone use
+
+`fio-check.sh` is self-contained: copied alone to a device, `check` and
+`help` work, `list` reports that no libs or profiles are installed, and `run`
+accepts a profile file path.
+
+Libs and profiles are looked up in an ordered list of directories, first
+match wins:
+
+1. `--lib-dir` / `--profiles-dir`, in the order given (repeatable)
+2. `FIOCHECK_LIB_PATH` / `FIOCHECK_PROFILE_PATH`, colon-separated
+3. `lib/` and `profiles/` next to `fio-check.sh` (skipped with `--no-builtin`)
+
+A product layer can keep its own profiles, expectation sets and libs in its
+own tree and still use the built-in libs:
+
+```sh
+./fio-check.sh run product/smoke --profiles-dir /usr/share/product/fio-check/profiles
+FIOCHECK_LIB_PATH=/opt/my-libs ./fio-check.sh run docker:cmds   # my lib_docker.sh first
+```
+
+A lib found earlier in the path replaces the built-in lib of the same name
+as a whole file. `list` shows both search paths and marks the hidden lib.
 
 ## How it is organized
 
@@ -125,7 +151,7 @@ v98`, and the CI matrix picks it up without further changes.
 ```sh
 # Fixture : foundries-full     (rootfs flavour used by tests/validate-profiles.sh)
 : "${FIOCHECK_DOCKER_STORAGE_DRIVER:=overlay2}"   # defaults first ...
-. "${FIO_TEST_LIB}/components/lib_docker.sh"      # ... then the libs
+fiocheck_use docker                               # ... then the libs, by name
 
 fiocheck_run() {
     fiocheck_req FR-02 "Container stack"          # tag the results that follow
@@ -134,8 +160,10 @@ fiocheck_run() {
 }
 ```
 
-`fiocheck_pre_hook` and `fiocheck_post_hook`, when defined, run around
-`fiocheck_run`.
+`fiocheck_use` finds each lib in the lib search path, so a profile kept
+outside this repository can use the built-in libs. A lib that is not found is
+reported as a FAIL. `fiocheck_pre_hook` and `fiocheck_post_hook`, when
+defined, run around `fiocheck_run`.
 
 ### Writing a lib
 
@@ -225,6 +253,7 @@ such a harness as its on-device assertions.
 ./test_fio_check.sh [-v]                  # suite, on this host
 FIO_SHELL=dash ./test_fio_check.sh        # fio-check executed by another shell
 tests/validate-profiles.sh [-v]           # every profile x expectation set x machine
+tests/validate-profiles.sh --profiles-dir <dir>   # ... including another profile tree
 tests/run-docker-tests.sh [target ...]    # both, in containers
 ```
 

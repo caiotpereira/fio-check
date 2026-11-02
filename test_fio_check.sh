@@ -895,7 +895,116 @@ crun lib_core_sysctl_dry --dry-run
 expect_dry_only
 
 # =============================================================================
-#  SECTION 12 — Portability lint
+#  SECTION 12 — Search paths and standalone use
+# =============================================================================
+section "Search paths and standalone use"
+
+# A copy of fio-check.sh with no lib/ or profiles/ next to it
+ALONE="${WORK_DIR}/alone"
+mkdir -p "${ALONE}"
+cp "${FIO}" "${ALONE}/fio-check.sh"
+# arun [args...] — run the standalone copy
+arun() {
+    # shellcheck disable=SC2086
+    OUTPUT=$(${FIO_SHELL} "${ALONE}/fio-check.sh" "$@" 2>&1)
+    EXIT_CODE=$?
+}
+
+# An external tree: a product profile layer and a lib directory
+EXT="${WORK_DIR}/ext"
+mkdir -p "${EXT}/profiles/product/expect" "${EXT}/lib" "${EXT}/lib2"
+cat > "${EXT}/profiles/product/smoke.sh" <<'EOF'
+: "${FIOCHECK_PRODUCT_CMD:=sh}"
+fiocheck_use probe
+fiocheck_run() { fiocheck_req PROD-1 "Product smoke"; lib_probe_ok; check_cmd "${FIOCHECK_PRODUCT_CMD}"; }
+EOF
+printf ': "${FIOCHECK_PRODUCT_CMD:=__no_such_cmd__}"\n' > "${EXT}/profiles/product/expect/broken.sh"
+printf 'lib_docker_cmds() { log_ok "overridden lib_docker_cmds"; }\n' > "${EXT}/lib/lib_docker.sh"
+printf 'lib_docker_cmds() { log_ok "second lib_docker_cmds"; }\n'     > "${EXT}/lib2/lib_docker.sh"
+
+check "standalone: help exits 0"
+arun --no-color help
+expect_exit 0
+
+check "standalone: list exits 0"
+arun --no-color list
+expect_exit 0
+
+check "standalone: list reports the empty search paths"
+expect_output_has "No lib directory"
+
+check "standalone: check cmd works without libs"
+arun --no-color check cmd sh
+expect_exit 0
+
+check "standalone: run <lib> fails and names the search paths"
+arun --no-color run docker
+expect_output_has "Searched libs in: *nothing"
+
+check "standalone: run <lib> exits 1"
+expect_exit 1
+
+check "standalone: run <profile file> reports a missing lib as FAIL"
+arun --no-color run "${EXT}/profiles/product/smoke.sh"
+expect_output_has "Lib not found: probe"
+
+check "standalone: run <profile file> with a missing lib exits 1"
+expect_exit 1
+
+check "standalone: --lib-dir supplies the libs a profile file needs"
+arun --no-color --lib-dir "${LIBFX}" run "${EXT}/profiles/product/smoke.sh"
+expect_exit 0
+
+check "--no-builtin ignores lib/ next to fio-check.sh"
+run --no-color --no-builtin run docker
+expect_exit 1
+
+check "--profiles-dir adds a profile directory; built-in libs stay available"
+run --no-color --profiles-dir "${EXT}/profiles" --lib-dir "${LIBFX}" run product/smoke
+expect_exit 0
+
+check "a profile from an added directory tags its results"
+expect_output_has "\[PROD-1\] Command exists: sh"
+
+check "built-in profiles are still found with an added profile directory"
+run --no-color --dry-run --profiles-dir "${EXT}/profiles" run meta-foundries/os-update
+expect_exit 0
+
+check "FIOCHECK_PROFILE_PATH and FIOCHECK_LIB_PATH add directories"
+FIOCHECK_PROFILE_PATH="${EXT}/profiles"; FIOCHECK_LIB_PATH="${LIBFX}"
+export FIOCHECK_PROFILE_PATH FIOCHECK_LIB_PATH
+run --no-color run product/smoke
+unset FIOCHECK_PROFILE_PATH FIOCHECK_LIB_PATH
+expect_exit 0
+
+check "an expectation set in an added profile directory is found"
+run --no-color --profiles-dir "${EXT}/profiles" --lib-dir "${LIBFX}" --expect broken run product/smoke
+expect_output_has "Command missing: __no_such_cmd__"
+
+check "an added lib directory overrides a built-in lib"
+run --no-color --lib-dir "${EXT}/lib" run docker:cmds
+expect_output_has "overridden lib_docker_cmds"
+
+check "the first --lib-dir wins"
+run --no-color --lib-dir "${EXT}/lib2" --lib-dir "${EXT}/lib" run docker:cmds
+expect_output_has "second lib_docker_cmds"
+
+check "list marks a lib hidden by an earlier directory"
+run --no-color --lib-dir "${EXT}/lib" list
+expect_output_has "overridden earlier in the path"
+
+check "list shows the search paths"
+expect_output_has "Lib search path: *${EXT}/lib:"
+
+check "a missing --lib-dir is reported and ignored"
+run --no-color --lib-dir "${WORK_DIR}/__none__" check cmd sh
+expect_output_has "not a directory"
+
+check "a missing --lib-dir does not fail the run"
+expect_exit 0
+
+# =============================================================================
+#  SECTION 13 — Portability lint
 # =============================================================================
 section "Portability lint"
 
@@ -924,7 +1033,7 @@ lint "no GNU-only sed -i / grep -P / sort -V"         'sed -i|grep -[a-zA-Z]*P|s
 
 
 # =============================================================================
-#  SECTION 13 — Missing / invalid arguments
+#  SECTION 14 — Missing / invalid arguments
 # =============================================================================
 section "Missing / invalid arguments"
 
@@ -957,7 +1066,7 @@ run run
 expect_exit 2
 
 # =============================================================================
-#  SECTION 14 — Option combinations
+#  SECTION 15 — Option combinations
 # =============================================================================
 section "Option combinations"
 

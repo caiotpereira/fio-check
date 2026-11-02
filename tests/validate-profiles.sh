@@ -3,8 +3,8 @@
 # tests/validate-profiles.sh — validate every layer profile against every
 # expectation set and machine
 #
-# The matrix is discovered, not listed: each profiles/<layer>/ that has an
-# expect/ directory contributes
+# The matrix is discovered, not listed: each <profile dir>/<layer>/ that has
+# an expect/ directory contributes
 #     every profile  x  every expect/<set>.sh  x  every machine/<m>.sh (or none)
 # so adding profiles/meta-lmp/expect/v98.sh or a new meta-foundries profile
 # extends the matrix with no change here.
@@ -16,6 +16,9 @@
 #
 # Usage:
 #   tests/validate-profiles.sh [options]
+#     --profiles-dir <d> also validate the layers under <d> (repeatable; searched
+#                        before the built-in profiles/)
+#     --lib-dir <d>      extra lib directory passed to fio-check (repeatable)
 #     --layer <name>     only this layer (meta-lmp, meta-foundries); repeatable
 #     --expect <name>    only this expectation set; repeatable
 #     --report-dir <d>   keep per-run reports in <d> (default: temporary)
@@ -29,7 +32,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIO="${ROOT}/fio-check.sh"
 MKFS="${ROOT}/tests/fixtures/make-rootfs.sh"
-PROFILES="${ROOT}/profiles"
+profile_dirs=""
+lib_opts=""
 
 layers=""
 expects=""
@@ -39,6 +43,10 @@ verbose=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --profiles-dir) [ -d "${2:-}" ] || { echo "--profiles-dir: not a directory: ${2:-}" >&2; exit 2; }
+                      profile_dirs="${profile_dirs} $(cd "$2" && pwd)"; shift ;;
+        --lib-dir)    [ -d "${2:-}" ] || { echo "--lib-dir: not a directory: ${2:-}" >&2; exit 2; }
+                      lib_opts="${lib_opts} --lib-dir $(cd "$2" && pwd)"; shift ;;
         --layer)      [ -n "${2:-}" ] || exit 2; layers="${layers} $2"; shift ;;
         --expect)     [ -n "${2:-}" ] || exit 2; expects="${expects} $2"; shift ;;
         --report-dir) [ -n "${2:-}" ] || exit 2; report_dir="$2"; shift ;;
@@ -74,9 +82,9 @@ failed=0
 results="${work}/results"
 : > "${results}"
 
-# run_one <layer> <profile> <expect> <machine|-> <fixture>
+# run_one <layer> <profile> <expect> <machine|-> <fixture> <profile file>
 run_one() {
-    local layer="$1" profile="$2" expect="$3" machine="$4" fixture="$5"
+    local layer="$1" profile="$2" expect="$3" machine="$4" fixture="$5" file="$6"
     local id="${layer}/${profile} expect=${expect}"
     local mopt="" hwid="qemux86-64"
     if [ "${machine}" != "-" ]; then
@@ -98,7 +106,7 @@ run_one() {
     local out="${work}/out_${tag}"
     # shellcheck disable=SC2086
     ${fio_shell} "${FIO}" --no-color -r "${report}" --root "${fx}" --kconfig "${fx}.kconfig" \
-        --expect "${expect}" ${mopt} run "${layer}/${profile}" > "${out}" 2>&1
+        --expect "${expect}" ${mopt} ${lib_opts} run "${file}" > "${out}" 2>&1
     local rc=$?
     local counts; counts="$(grep -E 'PASS: [0-9]+' "${out}" | tail -n 1 | sed 's/^ *//')"
     if [ "${rc}" -eq 0 ]; then
@@ -107,8 +115,8 @@ run_one() {
         failed=$(( failed + 1 ))
         printf '%s\tFAIL\t%s\n' "${id}" "${counts:-exit ${rc}}" >> "${results}"
         printf '  reproduce: tests/fixtures/make-rootfs.sh /tmp/fx %s %s && \\\n' "${fixture}" "${hwid}" >> "${results}.repro"
-        printf '             ./fio-check.sh --root /tmp/fx --kconfig /tmp/fx.kconfig --expect %s %s run %s/%s\n' \
-            "${expect}" "${mopt}" "${layer}" "${profile}" >> "${results}.repro"
+        printf '             ./fio-check.sh --root /tmp/fx --kconfig /tmp/fx.kconfig --expect %s %s%s run %s\n' \
+            "${expect}" "${mopt}" "${lib_opts}" "${file}" >> "${results}.repro"
         if [ "${verbose}" -eq 1 ]; then
             printf '\n--- %s\n' "${id}"
             grep -E '^ \[(FAIL|WARN)\]' "${out}" | head -n 20
@@ -117,7 +125,9 @@ run_one() {
     rm -rf "${fx}" "${fx}.kconfig"
 }
 
-for ldir in "${PROFILES}"/*/; do
+for ldir in $(for pd in ${profile_dirs} "${ROOT}/profiles"; do
+                  for l in "${pd}"/*/; do [ -d "${l}" ] && printf '%s\n' "${l}"; done
+              done); do
     layer="$(basename "${ldir}")"
     [ -d "${ldir}expect" ] || continue
     selected "${layer}" "${layers}" || continue
@@ -133,7 +143,7 @@ for ldir in "${PROFILES}"/*/; do
         for expect in $(names "${ldir}expect"); do
             selected "${expect}" "${expects}" || continue
             for machine in ${machines}; do
-                run_one "${layer}" "${profile}" "${expect}" "${machine}" "${fixture}"
+                run_one "${layer}" "${profile}" "${expect}" "${machine}" "${fixture}" "${ldir}${profile}.sh"
             done
         done
     done

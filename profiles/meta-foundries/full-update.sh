@@ -14,8 +14,7 @@
 : "${FIOCHECK_DOCKER_DAEMON_JSON:=/usr/lib/docker/daemon.json}"
 
 . "${FIOCHECK_PROFILE_DIR}/os-update.sh"
-. "${FIO_TEST_LIB}/components/lib_docker.sh"
-. "${FIO_TEST_LIB}/components/lib_composectl.sh"
+fiocheck_use docker composectl
 
 fiocheck_run() {
     fiocheck_run_os_update
